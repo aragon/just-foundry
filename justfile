@@ -221,7 +221,7 @@ resolve-verifier-params:
     #!/usr/bin/env bash
     case "${VERIFIER:-}" in
         etherscan)
-            echo "--verifier etherscan --verifier-url https://api.etherscan.io/v2/api --etherscan-api-key $ETHERSCAN_API_KEY" ;;
+            echo "--verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY" ;;
         blockscout)
             echo "--verifier blockscout --verifier-url https://$BLOCKSCOUT_HOST_NAME/api?" ;;
         sourcify)
@@ -290,7 +290,7 @@ refund:
     #!/usr/bin/env bash
     set -euo pipefail
     source {{ENV_RESOLVE_LIB}} && env_load
-    if [ -z "${REFUND_ADDRESS:-}" ] || [ "$REFUND_ADDRESS" = "0x0000000000000000000000000000000000000000" ]; then
+    if [ -z "${REFUND_ADDRESS:-}" ] || [[ "$REFUND_ADDRESS" =~ ^0x0{39}[0-9a-fA-F]$ ]]; then
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1
     fi
