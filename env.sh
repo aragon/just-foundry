@@ -3,8 +3,8 @@
 # Usage: source lib/just-foundry/env.sh
 
 _NETWORK_ENV="lib/just-foundry/.env"
-_SKIP="^(NETWORK_NAME|CHAIN_ID|VERIFIER|VARS_PROFILE)$"
-_MASK="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
+_SKIP_KEYS="^(NETWORK_NAME|CHAIN_ID|VERIFIER)$"
+_MASK_PATTERN="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
 
 _require_network() {
     [ -f "$_NETWORK_ENV" ] || { echo "No network selected. Run: just switch <network>"; return 1; }
@@ -22,9 +22,12 @@ load_network_env() {
 load_env() {
     local profile="${1:-}"
     load_network_env || return 1
-    local resolved="${profile:-${VARS_PROFILE:-}}"
+    local resolved_profile="${profile:-${NETWORK_NAME:-}}"
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
-        eval "$(_emit_env "$resolved")"
+        if [[ -n "$resolved_profile" ]] && grep -qE "^\s+${resolved_profile}:" .vars.yaml 2>/dev/null; then
+            >&2 echo "vars profile: $resolved_profile"
+        fi
+        eval "$(_emit_env "$resolved_profile")"
     elif [ -f .env ]; then
         set -a && source .env && set +a
     fi
@@ -34,18 +37,23 @@ load_env() {
 
 # Emit resolved export statements to stdout.
 # Pipes the network file + root .env into vars resolve (store takes priority).
+# Only passes -p <profile> if that profile is actually defined in .vars.yaml.
 # Any extra args are forwarded to vars resolve (e.g. --origins).
 _emit_env() {
     local profile="${1:-}"; shift 2>/dev/null || true
+    local profile_flag=""
+    if [[ -n "$profile" ]] && [ -f .vars.yaml ] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
+        profile_flag="-p $profile"
+    fi
     (cat "$_NETWORK_ENV"; [ -f .env ] && cat .env || true) | \
-        vars resolve --partial ${profile:+-p "$profile"} "$@"
+        vars resolve --partial ${profile_flag} "$@"
 }
 
 # --- Display helpers ---
 
 _mask_value() {
     local key="$1" value="$2"
-    if [[ "$key" =~ $_MASK ]] && [[ -n "$value" ]]; then
+    if [[ "$key" =~ $_MASK_PATTERN ]] && [[ -n "$value" ]]; then
         echo "${value:0:6}****"
     else
         echo "$value"
@@ -75,14 +83,14 @@ _display_resolved() {
                 source="dotenv"
             fi
             key="${line%%=*}"
-            [[ "$key" =~ $_SKIP ]] && continue
+            [[ "$key" =~ $_SKIP_KEYS ]] && continue
             [[ -n "$allowed" ]] && [[ ! "$key" =~ ^($allowed)$ ]] && continue
             after_eq="${line#*=\'}"
             value="${after_eq%\'*}"
             _print_var "$key" "$value" "$source"
         elif [[ "$line" =~ ^#\ ([A-Z_][A-Z0-9_]*)\ +not\ set ]]; then
             key="${BASH_REMATCH[1]}"
-            [[ "$key" =~ $_SKIP ]] && continue
+            [[ "$key" =~ $_SKIP_KEYS ]] && continue
             [[ -n "$allowed" ]] && [[ ! "$key" =~ ^($allowed)$ ]] && continue
             printf "  %-10s %s\n" "[not set]" "$key"
         fi
@@ -95,7 +103,7 @@ _display_raw() {
     [ -f "$file" ] || return
     while IFS='=' read -r key rest; do
         [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
-        [[ "$key" =~ $_SKIP ]] && continue
+        [[ "$key" =~ $_SKIP_KEYS ]] && continue
         value="${rest#\"}" ; value="${value%\"}"
         value="${value#\'}" ; value="${value%\'}"
         _print_var "$key" "$value"
@@ -111,7 +119,6 @@ show_env() {
 
     echo "Network:  $NETWORK_NAME ($CHAIN_ID)"
     echo "Verifier: $VERIFIER"
-    [ -n "${VARS_PROFILE:-}" ] && echo "Profile:  $VARS_PROFILE"
     echo ""
 
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
@@ -119,7 +126,7 @@ show_env() {
         ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$_NETWORK_ENV" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
         MANIFEST=$(grep -E '^ *- [A-Z_]' .vars.yaml | sed 's/^ *- //' | sed 's/ .*//' | tr '\n' '|' | sed 's/|$//')
         [ -n "$MANIFEST" ] && ALLOWED="$ALLOWED|$MANIFEST"
-        _emit_env "${VARS_PROFILE:-}" --origins | _display_resolved "$ALLOWED"
+        _emit_env "${NETWORK_NAME:-}" --origins | _display_resolved "$ALLOWED"
     else
         _display_raw "$_NETWORK_ENV"
         _display_raw .env

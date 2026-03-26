@@ -64,7 +64,7 @@ predeploy:
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_network_env
+    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $NETWORK_NAME
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just test 2>&1 | tee -a "$LOG_FILE"
@@ -76,7 +76,7 @@ deploy:
 resume-deploy:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_network_env
+    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $NETWORK_NAME
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just run {{DEPLOY_SCRIPT}} --resume 2>&1 | tee -a "$LOG_FILE"
@@ -185,7 +185,7 @@ verify-etherscan script=DEPLOY_SCRIPT:
 [group('verification')]
 verify-blockscout script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_network_env
+    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash script/verify-contracts.sh "$CHAIN_ID" blockscout "https://$BLOCKSCOUT_HOST_NAME/api?" "" "$SCRIPT_FILE"
 
@@ -193,7 +193,7 @@ verify-blockscout script=DEPLOY_SCRIPT:
 [group('verification')]
 verify-sourcify script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_network_env
+    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash script/verify-contracts.sh "$CHAIN_ID" sourcify "" "" "$SCRIPT_FILE"
 
@@ -278,7 +278,7 @@ clean-nonce nonce:
 
 # Cancel multiple stuck transactions: just clean-nonces "2 3 4"
 [private]
-clean-nonces nonces:
+clean-nonces *nonces:
     #!/usr/bin/env bash
     for nonce in {{nonces}}; do
         just clean-nonce "$nonce"
