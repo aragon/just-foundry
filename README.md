@@ -208,11 +208,12 @@ import 'lib/just-foundry/justfile'
 # Seed the protocol with test data
 seed:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     just run script/Seed.s.sol:Seed
+    just run script/Seed.s.sol:Seed --slow --legacy
 ```
 
-`ENV_RESOLVE_LIB` loads the primitives to resolve environment variables.
+`ENV_RESOLVE_LIB` loads the primitives to resolve and use environment variables from the available sources (`env_load_network`, `env_load`, and `env_show`).
 
 ---
 
@@ -243,12 +244,12 @@ To add a network, open a PR with a new `networks/<name>.env` file.
 These recipes are hidden from `just help` but available to run directly:
 
 ```sh
-just balance          # deployer wallet balance
-just gas-price        # current gas price on active network
-just nonce            # current deployer nonce
-just clean-nonce 27   # cancel a stuck tx by replacing it at nonce 27
-just clean-nonces "2 3 4"  # cancel multiple stuck txs
-just refund           # sweep remaining balance to REFUND_ADDRESS
+just balance             # deployer wallet balance
+just gas-price           # current gas price on active network
+just nonce               # current deployer nonce
+just clean-nonce 27      # cancel a stuck tx by replacing it at nonce 27
+just clean-nonces 2 3 4  # cancel multiple stuck txs
+just refund              # sweep remaining balance to REFUND_ADDRESS
 ```
 
 ---

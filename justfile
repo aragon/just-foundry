@@ -64,7 +64,7 @@ predeploy:
 deploy:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $NETWORK_NAME
+    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $NETWORK_NAME
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just test 2>&1 | tee -a "$LOG_FILE"
@@ -76,7 +76,7 @@ deploy:
 resume-deploy:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $NETWORK_NAME
+    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $NETWORK_NAME
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just run {{DEPLOY_SCRIPT}} --resume 2>&1 | tee -a "$LOG_FILE"
@@ -87,7 +87,7 @@ resume-deploy:
 run script *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     BUILD_PARAMS=$(just resolve-build-params)
     SCRIPT_PARAMS=$(just resolve-script-params)
     VERIFIER_PARAMS=$(just resolve-verifier-params)
@@ -103,7 +103,7 @@ run script *args:
 simulate script:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     export SIMULATION=true
     echo "export SIMULATION=true"
     BUILD_PARAMS=$(just resolve-build-params)
@@ -117,13 +117,13 @@ simulate script:
 env:
     #!/usr/bin/env bash
     source {{ENV_RESOLVE_LIB}}
-    show_env
+    env_show
 
 # Run all unit tests
 [group('test')]
 test *args:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     BUILD_PARAMS=$(just resolve-build-params)
     ETHERSCAN_API_KEY="" forge test $BUILD_PARAMS -vvv --no-match-path "./test/*fork*/*.sol" {{args}}
 
@@ -132,7 +132,7 @@ test *args:
 test-fork *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     BUILD_PARAMS=$(just resolve-build-params)
     forge test $BUILD_PARAMS -vvv \
         --match-path "./test/*fork*/*.sol" \
@@ -145,7 +145,7 @@ test-fork *args:
 test-coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_network_env
+    source {{ENV_RESOLVE_LIB}} && env_load_network
     which lcov > /dev/null || { echo "Error: install lcov (sudo apt install lcov)"; exit 1; }
     BUILD_PARAMS=$(just resolve-build-params)
     forge coverage --report lcov $BUILD_PARAMS
@@ -170,14 +170,14 @@ storage-info contract:
 anvil:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
 # Verify the last deployment on Etherscan
 [group('verification')]
 verify-etherscan script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash script/verify-contracts.sh "$CHAIN_ID" etherscan "https://api.etherscan.io/v2/api" "$ETHERSCAN_API_KEY" "$SCRIPT_FILE"
 
@@ -185,7 +185,7 @@ verify-etherscan script=DEPLOY_SCRIPT:
 [group('verification')]
 verify-blockscout script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
+    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash script/verify-contracts.sh "$CHAIN_ID" blockscout "https://$BLOCKSCOUT_HOST_NAME/api?" "" "$SCRIPT_FILE"
 
@@ -193,7 +193,7 @@ verify-blockscout script=DEPLOY_SCRIPT:
 [group('verification')]
 verify-sourcify script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_network_env    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
+    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash script/verify-contracts.sh "$CHAIN_ID" sourcify "" "" "$SCRIPT_FILE"
 
@@ -244,7 +244,7 @@ resolve-verifier-params:
 [group('helpers')]
 balance:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
     BALANCE=$(cast balance "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL")
     echo "Balance of $DEPLOYMENT_ADDRESS ($NETWORK_NAME):"
@@ -253,14 +253,14 @@ balance:
 [private]
 gas-price:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     echo "Gas price ($NETWORK_NAME):"
     cast gas-price --rpc-url "$RPC_URL"
 
 [private]
 nonce:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
     cast nonce "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL"
 
@@ -268,7 +268,7 @@ nonce:
 [private]
 clean-nonce nonce:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
     cast send --private-key "$DEPLOYMENT_PRIVATE_KEY" \
         --rpc-url "$RPC_URL" \
@@ -289,7 +289,7 @@ clean-nonces *nonces:
 refund:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_resolved_env
+    source {{ENV_RESOLVE_LIB}} && env_load
     if [ -z "${REFUND_ADDRESS:-}" ] || [ "$REFUND_ADDRESS" = "0x0000000000000000000000000000000000000000" ]; then
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1
