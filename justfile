@@ -87,7 +87,7 @@ resume-deploy:
 run script *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     BUILD_PARAMS=$(just resolve-build-params)
     SCRIPT_PARAMS=$(just resolve-script-params)
     VERIFIER_PARAMS=$(just resolve-verifier-params)
@@ -103,7 +103,7 @@ run script *args:
 simulate script:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     export SIMULATION=true
     echo "export SIMULATION=true"
     BUILD_PARAMS=$(just resolve-build-params)
@@ -123,7 +123,7 @@ env:
 [group('test')]
 test *args:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     BUILD_PARAMS=$(just resolve-build-params)
     ETHERSCAN_API_KEY="" forge test $BUILD_PARAMS -vvv --no-match-path "./test/*fork*/*.sol" {{args}}
 
@@ -132,7 +132,7 @@ test *args:
 test-fork *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     BUILD_PARAMS=$(just resolve-build-params)
     forge test $BUILD_PARAMS -vvv \
         --match-path "./test/*fork*/*.sol" \
@@ -170,14 +170,14 @@ storage-info contract:
 anvil:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
 # Verify the last deployment on Etherscan
 [group('verification')]
 verify-etherscan script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash script/verify-contracts.sh "$CHAIN_ID" etherscan "https://api.etherscan.io/v2/api" "$ETHERSCAN_API_KEY" "$SCRIPT_FILE"
 
@@ -244,7 +244,7 @@ resolve-verifier-params:
 [group('helpers')]
 balance:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
     BALANCE=$(cast balance "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL")
     echo "Balance of $DEPLOYMENT_ADDRESS ($NETWORK_NAME):"
@@ -253,14 +253,14 @@ balance:
 [private]
 gas-price:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     echo "Gas price ($NETWORK_NAME):"
     cast gas-price --rpc-url "$RPC_URL"
 
 [private]
 nonce:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
     cast nonce "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL"
 
@@ -268,7 +268,7 @@ nonce:
 [private]
 clean-nonce nonce:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
     cast send --private-key "$DEPLOYMENT_PRIVATE_KEY" \
         --rpc-url "$RPC_URL" \
@@ -289,7 +289,7 @@ clean-nonces *nonces:
 refund:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && load_env
+    source {{ENV_RESOLVE_LIB}} && load_resolved_env
     if [ -z "${REFUND_ADDRESS:-}" ] || [ "$REFUND_ADDRESS" = "0x0000000000000000000000000000000000000000" ]; then
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1

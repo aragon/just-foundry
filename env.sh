@@ -18,19 +18,24 @@ load_network_env() {
     set -a && source "$_NETWORK_ENV" && set +a
 }
 
-# Source the fully resolved env (network config + secrets) into the current shell
-load_env() {
+# Overlay secrets onto the current shell using the given profile.
+# Requires load_network_env to have run first (NETWORK_NAME must be set).
+_resolve_env() {
     local profile="${1:-}"
-    load_network_env || return 1
-    local resolved_profile="${profile:-${NETWORK_NAME:-}}"
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
-        if [[ -n "$resolved_profile" ]] && grep -qE "^\s+${resolved_profile}:" .vars.yaml 2>/dev/null; then
-            >&2 echo "vars profile: $resolved_profile"
+        if [[ -n "$profile" ]] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
+            >&2 echo "vars profile: $profile"
         fi
-        eval "$(_emit_env "$resolved_profile")"
+        eval "$(_emit_env "$profile")"
     elif [ -f .env ]; then
         set -a && source .env && set +a
     fi
+}
+
+# Source the fully resolved env (network config + secrets) into the current shell
+load_resolved_env() {
+    load_network_env || return 1
+    _resolve_env "$NETWORK_NAME"
 }
 
 # --- Core resolver ---
