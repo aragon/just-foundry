@@ -51,36 +51,36 @@ keys:
 $ just
 Available recipes:
     default
-    help                                   # Show available commands
+    help                                    # Show available commands
 
     [setup]
-    init network="mainnet"                 # Initialize the project for a given network (default: mainnet)
-    switch network                         # Select the active network
-    setup                                  # Install Foundry
+    init network="mainnet"                  # Initialize the project for a given network (default: mainnet)
+    switch network                          # Select the active network
+    setup                                   # Install Foundry
 
     [script]
-    predeploy                              # Simulate the deploy script
-    deploy                                 # Deploy: run tests, broadcast, tee to log
-    resume-deploy                          # Resume a pending deployment
-    run script *args                       # Run a forge script (broadcast)
-    simulate script                        # Simulate a forge script (no broadcast)
+    predeploy                               # Simulate the deploy script
+    deploy                                  # Deploy: run tests, broadcast, tee to log
+    resume-deploy                           # Resume a pending deployment
+    run script *args                        # Run a forge script (broadcast)
+    simulate script                         # Simulate a forge script (no broadcast)
 
     [helpers]
-    env                                    # Show current environment (resolved values + sources)
-    balance                                # Show current wallet balance
+    env                                     # Show current environment (resolved values + sources)
+    balance                                 # Show current wallet balance
 
     [test]
-    test *args                             # Run all unit tests
-    test-fork *args                        # Run fork tests (requires RPC_URL)
-    test-coverage                          # Generate HTML coverage report under ./report
+    test *args                              # Run all unit tests
+    test-fork *args                         # Run fork tests (requires RPC_URL)
+    test-coverage                           # Generate HTML coverage report under ./report
 
     [develop]
-    clean                                  # Clean compiler artifacts and coverage reports
-    storage-info contract                  # Show the storage layout of a contract
-    anvil                                  # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
+    clean                                   # Clean compiler artifacts and coverage reports
+    storage-info contract                   # Show the storage layout of a contract
+    anvil                                   # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
 
     [verification]
-    verify verifier="" script=DEPLOY_SCRIPT  # Verify all contracts from the latest broadcast
+    verify verifier="" script=DEPLOY_SCRIPT # Verify all contracts from the latest broadcast
 ```
 
 Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `clean-nonces`, `refund`. See [Debug helpers](#debug-helpers).
@@ -98,7 +98,7 @@ RPC_URL="https://eth-sepolia.drpc.org"   # public fallback; override with `vars`
 CHAIN_ID="11155111"
 NETWORK_NAME="sepolia"
 VERIFIER="etherscan"
-BLOCKSCOUT_HOST_NAME=""
+BLOCKSCOUT_HOST_NAME="eth-sepolia.blockscout.com" # alternative
 
 DAO_FACTORY_ADDRESS="0x..."
 PLUGIN_REPO_FACTORY_ADDRESS="0x..."
@@ -113,7 +113,7 @@ These files contain ready to use constants that your Foundry project can consume
 
 Network environment files only contain public values that you can override. Secrets need to be provided by the user. Two options:
 
-**Option 1 — plain `.env` file.** Copy `.env.example` to `.env` and add your values manually.
+**Option 1 — plain `.env` file** at the root of your project.
 
 **Option 2 — using `vars` (recommended).** An age-encrypted local store. Install it, store your keys, and every project resolves them automatically:
 
@@ -138,7 +138,7 @@ Both options are supported — `vars resolve` overrides the values from `lib/jus
 
 When you run `just switch sepolia`, the active network becomes `sepolia`. You may want to allow certain environment vars to change depending on the environment, which can be achieved by using profiles.
 
-`just` tasks that resolve secrets will automatically call `vars resolve -p <nework>` (if such profile exists in `.vars.yaml`):
+`just` tasks that resolve secrets will automatically call `vars resolve -p <nework>` (if the tool is installed and such profile exists in `.vars.yaml`):
 
 ```yaml
 # Env vars required by the project
