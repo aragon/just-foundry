@@ -50,9 +50,9 @@ install-vars:
     #!/usr/bin/env bash
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-    curl -L "https://github.com/vars-cli/vars/releases/download/v0.1.0/vars_0.1.0_${OS}_${ARCH}.tar.gz" | tar xz
+    curl -L "https://github.com/vars-cli/vars/releases/download/v0.3.0/vars_0.3.0_${OS}_${ARCH}.tar.gz" | tar xz
     sudo mv vars /usr/local/bin/
-    echo "vars installed."
+    echo "vars installed on /usr/local/bin/."
 
 # Simulate the deploy script
 [group('script')]

@@ -39,7 +39,7 @@ env_show() {
         ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$_NETWORK_ENV" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
         MANIFEST=$(grep -E '^ *- [A-Z_]' .vars.yaml | sed 's/^ *- //' | sed 's/ .*//' | tr '\n' '|' | sed 's/|$//')
         [ -n "$MANIFEST" ] && ALLOWED="$ALLOWED|$MANIFEST"
-        _env_exports "${NETWORK_NAME:-}" --origins | _env_display_origins "$ALLOWED"
+        _env_exports "${NETWORK_NAME:-}" --origin | _env_display_origin "$ALLOWED"
     else
         _env_display_raw "$_NETWORK_ENV"
         _env_display_raw .env
@@ -51,7 +51,7 @@ env_show() {
 # Emit resolved export statements to stdout.
 # Pipes network file + root .env into vars resolve (store takes priority over files).
 # Only passes -p <profile> if that profile is defined in .vars.yaml.
-# Any extra args are forwarded to vars resolve (e.g. --origins).
+# Any extra args are forwarded to vars resolve (e.g. --origin).
 _env_exports() {
     local profile="${1:-}"; shift 2>/dev/null || true
     local profile_flag=""
@@ -106,8 +106,8 @@ _env_print() {
     fi
 }
 
-# Parse `vars resolve --origins` output and print formatted lines
-_env_display_origins() {
+# Parse `vars resolve --origin` output and print formatted lines
+_env_display_origin() {
     local allowed="$1"
     while IFS= read -r line; do
         if [[ "$line" == export\ * ]]; then
