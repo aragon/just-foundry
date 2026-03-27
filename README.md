@@ -138,7 +138,7 @@ Both options are supported — `vars resolve` overrides the values from `lib/jus
 
 When you run `just switch sepolia`, the active network becomes `sepolia`. You may want to allow certain environment vars to change depending on the environment, which can be achieved by using profiles.
 
-`just` tasks that resolve secrets will automatically call `vars resolve -p <nework>` (if such profile exists in `.vars.yaml`):
+`just` tasks that resolve secrets will automatically call `vars resolve -p <nework>` (if the tool is installed and such profile exists in `.vars.yaml`):
 
 ```yaml
 # Env vars required by the project
