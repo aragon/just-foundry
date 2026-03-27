@@ -88,9 +88,9 @@ run script *args:
     #!/usr/bin/env bash
     set -euo pipefail
     source {{ENV_RESOLVE_LIB}} && env_load
-    BUILD_PARAMS=$(just resolve-build-params)
-    SCRIPT_PARAMS=$(just resolve-script-params)
-    VERIFIER_PARAMS=$(just resolve-verifier-params)
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
+    SCRIPT_PARAMS=$(just resolve-script-params) || exit 1
+    VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
     forge script {{script}} \
         --rpc-url "$RPC_URL" \
         --retries 10 --delay 10 \
@@ -106,7 +106,7 @@ simulate script:
     source {{ENV_RESOLVE_LIB}} && env_load
     export SIMULATION=true
     echo "export SIMULATION=true"
-    BUILD_PARAMS=$(just resolve-build-params)
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
     forge script {{script}} \
         --rpc-url "$RPC_URL" \
         $BUILD_PARAMS \
@@ -124,7 +124,7 @@ env:
 test *args:
     #!/usr/bin/env bash
     source {{ENV_RESOLVE_LIB}} && env_load
-    BUILD_PARAMS=$(just resolve-build-params)
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
     ETHERSCAN_API_KEY="" forge test $BUILD_PARAMS -vvv --no-match-path "./test/*fork*/*.sol" {{args}}
 
 # Run fork tests (requires RPC_URL)
@@ -133,7 +133,7 @@ test-fork *args:
     #!/usr/bin/env bash
     set -euo pipefail
     source {{ENV_RESOLVE_LIB}} && env_load
-    BUILD_PARAMS=$(just resolve-build-params)
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
     forge test $BUILD_PARAMS -vvv \
         --match-path "./test/*fork*/*.sol" \
         --rpc-url "$RPC_URL" \
@@ -147,7 +147,7 @@ test-coverage:
     set -euo pipefail
     source {{ENV_RESOLVE_LIB}} && env_load_network
     which lcov > /dev/null || { echo "Error: install lcov (sudo apt install lcov)"; exit 1; }
-    BUILD_PARAMS=$(just resolve-build-params)
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
     forge coverage --report lcov $BUILD_PARAMS
     lcov --remove lcov.info -o lcov.info.pruned 'test/**/*.sol' 'script/**/*.sol'
     genhtml lcov.info.pruned -o report
@@ -181,15 +181,16 @@ verify verifier="" script=DEPLOY_SCRIPT:
     source {{ENV_RESOLVE_LIB}} && env_load
     [ -n "{{verifier}}" ] && export VERIFIER="{{verifier}}"
     [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
-    VERIFIER_PARAMS=$(just resolve-verifier-params)
+    VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
     bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
 
-# Compiler flags (zksync requires --zksync)
+# Compiler flags (zksync requires foundry-zksync — https://github.com/matter-labs/foundry-zksync)
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
+        forge --version 2>&1 | grep -qi zksync || { echo "Error: foundry-zksync is required for ZKSync networks. See https://github.com/matter-labs/foundry-zksync" >&2; exit 1; }
         echo "--zksync"
     fi
 
