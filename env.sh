@@ -79,7 +79,9 @@ _env_apply_secrets() {
         if [[ -n "$profile" ]] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
             >&2 echo "vars profile: $profile"
         fi
-        eval "$(_env_exports "$profile")"
+        local exports
+        exports=$(_env_exports "$profile") || return 1
+        eval "$exports"
     elif [ -f .env ]; then
         set -a && source .env && set +a
     fi

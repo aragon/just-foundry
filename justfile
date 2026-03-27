@@ -173,29 +173,17 @@ anvil:
     source {{ENV_RESOLVE_LIB}} && env_load
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
-# Verify the last deployment on Etherscan
+# Verify all contracts from the latest broadcast (verifier: etherscan|blockscout|sourcify, default: from network config)
 [group('verification')]
-verify-etherscan script=DEPLOY_SCRIPT:
+verify verifier="" script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
+    set -euo pipefail
     source {{ENV_RESOLVE_LIB}} && env_load
+    [ -n "{{verifier}}" ] && export VERIFIER="{{verifier}}"
+    [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
+    VERIFIER_PARAMS=$(just resolve-verifier-params)
     SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
-    bash script/verify-contracts.sh "$CHAIN_ID" etherscan "https://api.etherscan.io/v2/api" "$ETHERSCAN_API_KEY" "$SCRIPT_FILE"
-
-# Verify the last deployment on BlockScout
-[group('verification')]
-verify-blockscout script=DEPLOY_SCRIPT:
-    #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
-    SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
-    bash script/verify-contracts.sh "$CHAIN_ID" blockscout "https://$BLOCKSCOUT_HOST_NAME/api?" "" "$SCRIPT_FILE"
-
-# Verify the last deployment on Sourcify
-[group('verification')]
-verify-sourcify script=DEPLOY_SCRIPT:
-    #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $CHAIN_ID $BLOCKSCOUT_HOST_NAME
-    SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
-    bash script/verify-contracts.sh "$CHAIN_ID" sourcify "" "" "$SCRIPT_FILE"
+    bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
 
 # Compiler flags (zksync requires --zksync)
 [private]
@@ -221,8 +209,10 @@ resolve-verifier-params:
     #!/usr/bin/env bash
     case "${VERIFIER:-}" in
         etherscan)
+            [ -n "${ETHERSCAN_API_KEY:-}" ] || { echo "Error: ETHERSCAN_API_KEY is not set" >&2; exit 1; }
             echo "--verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY" ;;
         blockscout)
+            [ -n "${BLOCKSCOUT_HOST_NAME:-}" ] || { echo "Error: BLOCKSCOUT_HOST_NAME is not set" >&2; exit 1; }
             echo "--verifier blockscout --verifier-url https://$BLOCKSCOUT_HOST_NAME/api?" ;;
         sourcify)
             echo "--verifier sourcify" ;;
@@ -236,6 +226,9 @@ resolve-verifier-params:
             echo "--verifier custom --verifier-url https://api.routescan.io/v2/network/mainnet/evm/$CHAIN_ID/etherscan --etherscan-api-key verifyContract" ;;
         routescan-testnet)
             echo "--verifier custom --verifier-url https://api.routescan.io/v2/network/testnet/evm/$CHAIN_ID/etherscan --etherscan-api-key verifyContract" ;;
+        *)
+            echo "Error: unsupported verifier '${VERIFIER:-}'. Supported: etherscan, blockscout, sourcify, zksync, routescan-mainnet, routescan-testnet" >&2
+            exit 1 ;;
     esac
 
 # --- Debug helpers (not listed — see lib/just-foundry/README.md) ---
