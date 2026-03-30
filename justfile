@@ -112,13 +112,6 @@ simulate script:
         $BUILD_PARAMS \
         -vvv
 
-# Show current environment (resolved values + sources)
-[group('helpers')]
-env:
-    #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}}
-    env_show
-
 # Run all unit tests
 [group('test')]
 test *args:
@@ -153,6 +146,21 @@ test-coverage:
     genhtml lcov.info.pruned -o report
     which open > /dev/null && open report/index.html || true
     which xdg-open > /dev/null && xdg-open report/index.html || true
+
+# Show current environment (resolved values + sources)
+[group('helpers')]
+env:
+    #!/usr/bin/env bash
+    source {{ENV_RESOLVE_LIB}}
+    env_show
+
+# Pin a file to IPFS via Pinata (requires PINATA_JWT in vars or .env)
+[group('helpers')]
+ipfs-pin file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source {{ENV_RESOLVE_LIB}} && env_load
+    bash lib/just-foundry/scripts/ipfs-pin.sh "{{file}}"
 
 # Clean compiler artifacts and coverage reports
 [group('develop')]

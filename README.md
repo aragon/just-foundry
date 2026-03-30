@@ -65,14 +65,15 @@ Available recipes:
     run script *args                        # Run a forge script (broadcast)
     simulate script                         # Simulate a forge script (no broadcast)
 
-    [helpers]
-    env                                     # Show current environment (resolved values + sources)
-    balance                                 # Show current wallet balance
-
     [test]
     test *args                              # Run all unit tests
     test-fork *args                         # Run fork tests (requires RPC_URL)
     test-coverage                           # Generate HTML coverage report under ./report
+
+    [helpers]
+    env                                     # Show current environment (resolved values + sources)
+    ipfs-pin file                           # Pin a file to IPFS via Pinata (requires PINATA_JWT in vars or .env)
+    balance                                 # Show current wallet balance
 
     [develop]
     clean                                   # Clean compiler artifacts and coverage reports
