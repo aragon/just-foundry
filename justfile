@@ -47,6 +47,7 @@ setup:
     #!/usr/bin/env bash
     set -euo pipefail
     curl -L https://foundry.paradigm.xyz | bash
+    export PATH="$HOME/.foundry/bin:$PATH"
     foundryup -v stable
 
 # Install foundry-zksync alongside standard Foundry (forge-zksync / cast-zksync)
@@ -60,6 +61,7 @@ setup-zksync:
     fi
     echo "Installing foundry-zksync..."
     curl -L https://raw.githubusercontent.com/matter-labs/foundry-zksync/main/install-foundry-zksync | bash
+    export PATH="$HOME/.foundry/bin:$PATH"
     foundryup-zksync
     mv ~/.foundry/bin/forge ~/.foundry/bin/forge-zksync
     mv ~/.foundry/bin/cast ~/.foundry/bin/cast-zksync
@@ -237,6 +239,7 @@ resolve-forge:
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
+    source {{ENV_RESOLVE_LIB}} && env_load_network
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         echo "--zksync"
     fi
