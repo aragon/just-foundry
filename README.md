@@ -249,6 +249,7 @@ just nonce               # current deployer nonce
 just clean-nonce 27      # cancel a stuck tx by replacing it at nonce 27
 just clean-nonces 2 3 4  # cancel multiple stuck txs
 just refund              # sweep remaining balance to REFUND_ADDRESS
+just setup-zksync        # install foundry-zksync alongside standard Foundry (required for zksync / zksync-sepolia networks)
 ```
 
 ---
