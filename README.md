@@ -36,7 +36,7 @@ Secrets and env vars:
 ```yaml
 # .vars.yaml
 keys:
-  - DEPLOYMENT_PRIVATE_KEY
+  - DEPLOYER_KEY
   - ETHERSCAN_API_KEY
   - RPC_URL
   # - ...
@@ -115,7 +115,7 @@ The following are **not** in the network config — supply them in your local `.
 
 | Variable | Description |
 |---|---|
-| `DEPLOYMENT_PRIVATE_KEY` | Deployer wallet private key |
+| `DEPLOYER_KEY` | Deployer wallet private key |
 | `ETHERSCAN_API_KEY` | Required when `VERIFIER=etherscan` |
 | `PINATA_JWT` | Required for `just ipfs-pin` |
 | `REFUND_ADDRESS` | Destination for `just refund` |
@@ -158,7 +158,7 @@ Network environment files only contain public values that you can override. Secr
 just install-vars
 
 # Store your secrets and overrides
-vars set DEPLOYMENT_PRIVATE_KEY
+vars set DEPLOYER_KEY
 vars set ETHERSCAN_API_KEY
 vars set sepolia/RPC_URL "https://sepolia.drpc.org"
 vars set hoodi/RPC_URL "https://hoodi.drpc.org"
@@ -179,26 +179,26 @@ When you run `just switch sepolia`, the active network becomes `sepolia`. You ma
 ```yaml
 # Env vars required by the project
 keys:
-  - DEPLOYMENT_PRIVATE_KEY
+  - DEPLOYER_KEY
   - ETHERSCAN_API_KEY
   - RPC_URL
 
 # Profiles: mapping specific env vars, depending on the environment
 profiles:
   sepolia:
-    DEPLOYMENT_PRIVATE_KEY: sepolia/DEPLOYMENT_PRIVATE_KEY
+    DEPLOYER_KEY: sepolia/DEPLOYER_KEY
     RPC_URL: sepolia/RPC_URL
   mainnet:
-    DEPLOYMENT_PRIVATE_KEY: mainnet/DEPLOYMENT_PRIVATE_KEY
+    DEPLOYER_KEY: mainnet/DEPLOYER_KEY
 ```
 
 This lets you store per-network credentials in your:
 
 ```sh
 # store your secrets locally
-vars set sepolia/DEPLOYMENT_PRIVATE_KEY   # testnet wallet
-vars set mainnet/DEPLOYMENT_PRIVATE_KEY   # prod wallet
-vars set sepolia/RPC_URL                  # private RPC endpoint
+vars set sepolia/DEPLOYER_KEY     # testnet wallet
+vars set mainnet/DEPLOYER_KEY     # prod wallet
+vars set sepolia/RPC_URL          # private RPC endpoint
 ```
 
 ### `just env`
@@ -209,7 +209,7 @@ Shows the fully resolved environment — every variable once, with its effective
 Network:  sepolia (11155111)
 Verifier: etherscan
 
-  [vars]     DEPLOYMENT_PRIVATE_KEY         1234****
+  [vars]     DEPLOYER_KEY                   1234****
   [vars]     ETHERSCAN_API_KEY              abcd****
   [dotenv]   RPC_URL                        https://sepolia.drpc.org
   [dotenv]   DAO_FACTORY_ADDRESS            0xB815791c...

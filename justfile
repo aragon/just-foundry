@@ -239,7 +239,7 @@ resolve-forge:
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         echo "--zksync"
     fi
@@ -289,9 +289,9 @@ resolve-verifier-params:
 balance:
     #!/usr/bin/env bash
     source {{ ENV_RESOLVE_LIB }} && env_load
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    BALANCE=$(cast balance "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL")
-    echo "Balance of $DEPLOYMENT_ADDRESS ($NETWORK_NAME):"
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
+    echo "Balance of $DEPLOYER_ADDRESS ($NETWORK_NAME):"
     cast --to-unit "$BALANCE" ether
 
 [private]
@@ -305,20 +305,20 @@ gas-price:
 nonce:
     #!/usr/bin/env bash
     source {{ ENV_RESOLVE_LIB }} && env_load
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    cast nonce "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL"
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    cast nonce "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL"
 
 # Cancel a stuck transaction by sending a 0-value tx at the same nonce
 [private]
 clean-nonce nonce:
     #!/usr/bin/env bash
     source {{ ENV_RESOLVE_LIB }} && env_load
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    cast send --private-key "$DEPLOYMENT_PRIVATE_KEY" \
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    cast send --private-key "$DEPLOYER_KEY" \
         --rpc-url "$RPC_URL" \
         --value 0 \
         --nonce {{ nonce }} \
-        "$DEPLOYMENT_ADDRESS"
+        "$DEPLOYER_ADDRESS"
 
 # Cancel multiple stuck transactions: just clean-nonces "2 3 4"
 [private]
@@ -338,8 +338,8 @@ refund:
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1
     fi
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    BALANCE=$(cast balance "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL")
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
     GAS_PRICE=$(cast gas-price --rpc-url "$RPC_URL")
     SPENDABLE=$(echo "$BALANCE - $GAS_PRICE * 50000" | bc)
     if [ "$(echo "$SPENDABLE > 0" | bc)" = "0" ]; then
@@ -349,7 +349,7 @@ refund:
     echo "Refunding $SPENDABLE wei → $REFUND_ADDRESS"
     read -rp "Continue? (y/N) " CONFIRM
     [ "$CONFIRM" = "y" ] || { echo "Aborting"; exit 1; }
-    cast send --private-key "$DEPLOYMENT_PRIVATE_KEY" \
+    cast send --private-key "$DEPLOYER_KEY" \
         --rpc-url "$RPC_URL" \
         --value "$SPENDABLE" \
         "$REFUND_ADDRESS"
