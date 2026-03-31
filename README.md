@@ -88,6 +88,41 @@ Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `c
 
 ---
 
+## Environment variables
+
+All variables below are resolved automatically from the active network config when you call `env_load` or `env_load_network`. You can override any of them in your `.env` file or via `vars`.
+
+| Variable | Description |
+|---|---|
+| `RPC_URL` | JSON-RPC endpoint (public fallback; override with a private one) |
+| `CHAIN_ID` | EVM chain ID |
+| `NETWORK_NAME` | Network name (e.g. `sepolia`, `mainnet`) |
+| `VERIFIER` | Default verifier (`etherscan`, `blockscout`, `sourcify`, `zksync`, `routescan-mainnet`, `routescan-testnet`) |
+| `BLOCKSCOUT_HOST_NAME` | Blockscout host — required when `VERIFIER=blockscout` |
+| `FOUNDRY_EVM_VERSION` | EVM version override (e.g. `shanghai` for Chiliz) — picked up by Foundry automatically |
+| `DAO_FACTORY_ADDRESS` | Aragon OSx `DAOFactory` |
+| `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon OSx `PluginRepoFactory` |
+| `PLUGIN_SETUP_PROCESSOR_ADDRESS` | Aragon OSx `PluginSetupProcessor` |
+| `MANAGEMENT_DAO_ADDRESS` | Aragon management DAO |
+| `MANAGEMENT_DAO_MULTISIG_ADDRESS` | Aragon management DAO multisig |
+| `TOKEN_VOTING_PLUGIN_REPO_ADDRESS` | Token Voting plugin repo |
+| `MULTISIG_PLUGIN_REPO_ADDRESS` | Multisig plugin repo |
+| `LOCK_TO_VOTE_PLUGIN_REPO_ADDRESS` | Lock to Vote plugin repo |
+| `ADMIN_PLUGIN_REPO_ADDRESS` | Admin plugin repo |
+| `SPP_PLUGIN_REPO_ADDRESS` | Staged Proposal Processor plugin repo |
+
+The following are **not** in the network config — supply them in your local `.env` or via `vars`:
+
+| Variable | Description |
+|---|---|
+| `DEPLOYMENT_PRIVATE_KEY` | Deployer wallet private key |
+| `ETHERSCAN_API_KEY` | Required when `VERIFIER=etherscan` |
+| `PINATA_JWT` | Required for `just ipfs-pin` |
+| `REFUND_ADDRESS` | Destination for `just refund` |
+| `FORK_BLOCK_NUMBER` | Pin fork tests to a specific block (optional) |
+
+---
+
 ## How it works
 
 ### Network config
