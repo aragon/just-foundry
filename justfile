@@ -1,6 +1,7 @@
 # NOTE: All recipes imported from this file will run on the path importing it
 set shell := ["bash", "-c"]
 set dotenv-load := false
+set allow-duplicate-variables
 
 ENV_RESOLVE_LIB := "lib/just-foundry/env.sh"
 DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"   # Default deploy script: override in root justfile
