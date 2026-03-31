@@ -14,9 +14,16 @@ _ENV_MASK="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
 # --- Public API ---
 
 # Source the network .env symlink into the current shell (public config only)
+# If a project-level networks/<name>.env exists AND a library base also exists,
+# the project overlay is sourced on top (overrides library values at runtime).
 env_load_network() {
     _env_require_network || return 1
     set -a && source "$_NETWORK_ENV" && set +a
+    # Apply project-level overlay only when a library base exists
+    # (project-only networks already point directly to networks/<name>.env)
+    if [ -f "networks/${NETWORK_NAME}.env" ] && [ -f "lib/just-foundry/networks/${NETWORK_NAME}.env" ]; then
+        set -a && source "networks/${NETWORK_NAME}.env" && set +a
+    fi
 }
 
 # Source the fully resolved env (network config + secrets) into the current shell
@@ -29,19 +36,27 @@ env_load() {
 env_show() {
     _env_require_network || return 1
     set -a && source "$_NETWORK_ENV" && set +a
+    local _project_overlay=""
+    if [ -f "networks/${NETWORK_NAME}.env" ] && [ -f "lib/just-foundry/networks/${NETWORK_NAME}.env" ]; then
+        _project_overlay="networks/${NETWORK_NAME}.env"
+        set -a && source "$_project_overlay" && set +a
+    fi
 
     echo "Network:  $NETWORK_NAME ($CHAIN_ID)"
     echo "Verifier: $VERIFIER"
+    [ -n "$_project_overlay" ] && echo "Overlay:  $_project_overlay"
     echo ""
 
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
         local ALLOWED MANIFEST
         ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$_NETWORK_ENV" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
+        [ -n "$_project_overlay" ] && ALLOWED="$ALLOWED|$(grep -E '^[A-Z_][A-Z0-9_]*=' "$_project_overlay" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')"
         MANIFEST=$(grep -E '^ *- [A-Z_]' .vars.yaml | sed 's/^ *- //' | sed 's/ .*//' | tr '\n' '|' | sed 's/|$//')
         [ -n "$MANIFEST" ] && ALLOWED="$ALLOWED|$MANIFEST"
         _env_exports "${NETWORK_NAME:-}" --origin | _env_display_origin "$ALLOWED"
     else
         _env_display_raw "$_NETWORK_ENV"
+        [ -n "$_project_overlay" ] && _env_display_raw "$_project_overlay"
         _env_display_raw .env
     fi
 }
@@ -58,8 +73,12 @@ _env_exports() {
     if [[ -n "$profile" ]] && [ -f .vars.yaml ] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
         profile_flag="-p $profile"
     fi
-    # Inject the local .env files to vars (if present) and resolve the secrets
-    (cat "$_NETWORK_ENV"; [ -f .env ] && cat .env || true) | \
+    # Inject env files into vars: network base, project overlay (if library base exists), root .env
+    local _network_name
+    _network_name=$(grep -m1 '^NETWORK_NAME=' "$_NETWORK_ENV" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
+    (cat "$_NETWORK_ENV"; \
+     [ -n "$_network_name" ] && [ -f "networks/${_network_name}.env" ] && [ -f "lib/just-foundry/networks/${_network_name}.env" ] && cat "networks/${_network_name}.env" || true; \
+     [ -f .env ] && cat .env || true) | \
         vars resolve --partial ${profile_flag} "$@"
 }
 
