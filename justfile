@@ -27,19 +27,33 @@ init network="mainnet":
     just switch {{ network }}
     git submodule update --init --recursive
 
-# Select the active network
+# Select the active network (checks library and project-level .env.<network>)
 [group('setup')]
 switch network:
     #!/usr/bin/env bash
     set -euo pipefail
-    NETWORKS_DIR="lib/just-foundry/networks"
-    if [ ! -f "$NETWORKS_DIR/{{ network }}.env" ]; then
+    LIB_ENV="lib/just-foundry/networks/{{ network }}.env"
+    PROJECT_ENV=".env.{{ network }}"
+    TARGET="lib/just-foundry/.env"
+    if [ ! -f "$LIB_ENV" ] && [ ! -f "$PROJECT_ENV" ]; then
         echo "Error: network '{{ network }}' not found."
-        echo "Available networks: $(ls "$NETWORKS_DIR"/*.env | xargs -I{} basename {} .env | tr '\n' ' ')"
+        LIB_NETS=$(ls lib/just-foundry/networks/*.env 2>/dev/null | xargs -I{} basename {} .env | tr '\n' ' ')
+        PRJ_NETS=$(ls .env.* 2>/dev/null | sed 's/^\.env\.//' | tr '\n' ' ')
+        ALL=$(echo "$LIB_NETS $PRJ_NETS" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+        echo "Available networks: $ALL"
         exit 1
     fi
-    ln -sf "networks/{{ network }}.env" lib/just-foundry/.env
-    echo "Using network: {{ network }}"
+    rm -f "$TARGET"
+    if [ -f "$LIB_ENV" ]; then
+        ln -sf "networks/{{ network }}.env" "$TARGET"
+    else
+        ln -sf "../../$PROJECT_ENV" "$TARGET"
+    fi
+    if [ -f "$LIB_ENV" ] && [ -f "$PROJECT_ENV" ]; then
+        echo "Using network: {{ network }} (with project overrides)"
+    else
+        echo "Using network: {{ network }}"
+    fi
 
 # Install Foundry
 [group('setup')]
