@@ -86,25 +86,14 @@ predeploy:
 
 # Deploy: run tests, broadcast, tee to log
 [group('script')]
-deploy:
+deploy *args:
     #!/usr/bin/env bash
     set -euo pipefail
     source {{ ENV_RESOLVE_LIB }} && env_load_network    # read $NETWORK_NAME
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just test 2>&1 | tee -a "$LOG_FILE"
-    just run {{ DEPLOY_SCRIPT }} 2>&1 | tee -a "$LOG_FILE"
-    echo "Logs saved in $LOG_FILE"
-
-# Resume a pending deployment
-[group('script')]
-resume-deploy:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load_network    # read $NETWORK_NAME
-    mkdir -p logs artifacts
-    LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
-    just run {{ DEPLOY_SCRIPT }} --resume 2>&1 | tee -a "$LOG_FILE"
+    just run {{ DEPLOY_SCRIPT }} "{{ args }}" 2>&1 | tee -a "$LOG_FILE"
     echo "Logs saved in $LOG_FILE"
 
 # Run a forge script (broadcast)

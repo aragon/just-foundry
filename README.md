@@ -61,7 +61,6 @@ Available recipes:
     [script]
     predeploy                               # Simulate the deploy script
     deploy                                  # Deploy: run tests, broadcast, tee to log
-    resume-deploy                           # Resume a pending deployment
     run script *args                        # Run a forge script (broadcast)
     simulate script                         # Simulate a forge script (no broadcast)
 
