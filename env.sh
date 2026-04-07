@@ -14,15 +14,15 @@ _ENV_MASK="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
 # --- Public API ---
 
 # Source the network .env symlink into the current shell (public config only)
-# If a project-level networks/<name>.env exists AND a library base also exists,
+# If a project-level .env.<name> exists AND a library base also exists,
 # the project overlay is sourced on top (overrides library values at runtime).
 env_load_network() {
     _env_require_network || return 1
     set -a && source "$_NETWORK_ENV" && set +a
     # Apply project-level overlay only when a library base exists
-    # (project-only networks already point directly to networks/<name>.env)
-    if [ -f "networks/${NETWORK_NAME}.env" ] && [ -f "lib/just-foundry/networks/${NETWORK_NAME}.env" ]; then
-        set -a && source "networks/${NETWORK_NAME}.env" && set +a
+    # (project-only networks already point directly to .env.<name>)
+    if [ -f ".env.${NETWORK_NAME}" ] && [ -f "lib/just-foundry/networks/${NETWORK_NAME}.env" ]; then
+        set -a && source ".env.${NETWORK_NAME}" && set +a
     fi
 }
 
@@ -37,8 +37,8 @@ env_show() {
     _env_require_network || return 1
     set -a && source "$_NETWORK_ENV" && set +a
     local _project_overlay=""
-    if [ -f "networks/${NETWORK_NAME}.env" ] && [ -f "lib/just-foundry/networks/${NETWORK_NAME}.env" ]; then
-        _project_overlay="networks/${NETWORK_NAME}.env"
+    if [ -f ".env.${NETWORK_NAME}" ] && [ -f "lib/just-foundry/networks/${NETWORK_NAME}.env" ]; then
+        _project_overlay=".env.${NETWORK_NAME}"
         set -a && source "$_project_overlay" && set +a
     fi
 
@@ -77,7 +77,7 @@ _env_exports() {
     local _network_name
     _network_name=$(grep -m1 '^NETWORK_NAME=' "$_NETWORK_ENV" 2>/dev/null | cut -d= -f2 | tr -d '"' || true)
     (cat "$_NETWORK_ENV"; \
-     [ -n "$_network_name" ] && [ -f "networks/${_network_name}.env" ] && [ -f "lib/just-foundry/networks/${_network_name}.env" ] && cat "networks/${_network_name}.env" || true; \
+     [ -n "$_network_name" ] && [ -f ".env.${_network_name}" ] && [ -f "lib/just-foundry/networks/${_network_name}.env" ] && cat ".env.${_network_name}" || true; \
      [ -f .env ] && cat .env || true) | \
         vars resolve --partial ${profile_flag} "$@"
 }
