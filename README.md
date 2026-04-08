@@ -20,13 +20,16 @@ import 'lib/just-foundry/justfile'
 # DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
 ```
 
-Initialize for your target network:
+Initialize submodules and set up your target network:
 
 ```sh
+git submodule update --init --recursive
 just init sepolia
 ```
 
-This scaffolds `.env.sepolia` from the template, sets it as the active network, and initializes submodules.
+> **Fresh clones:** `just init` imports its recipes from `lib/just-foundry/justfile`, so the submodule must exist first. Either clone with `--recursive` or run `git submodule update --init --recursive` before `just init`.
+
+This scaffolds `.env.sepolia` from the template and sets it as the active network.
 
 Run `just help` to see everything available.
 

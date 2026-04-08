@@ -22,7 +22,6 @@ init network="mainnet":
         echo "      You can copy .env.example into .env and define your secrets there."
         echo "      You can install vars with 'just install-vars'"
     fi
-    git submodule update --init --recursive
     just add-network {{network}}
     just switch {{network}}
 
