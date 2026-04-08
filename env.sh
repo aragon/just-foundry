@@ -7,28 +7,46 @@
 #   env_load               source network config + resolved secrets into the current shell
 #   env_show               print the resolved environment with source attribution
 
-_NETWORK_ENV="lib/just-foundry/.env"
+_JUST_DIR=".just"
+_ACTIVE_NETWORK_FILE="$_JUST_DIR/.active-network"
 _ENV_SKIP="^(NETWORK_NAME|CHAIN_ID|VERIFIER)$"
 _ENV_MASK="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
 
+# --- Network file resolution ---
+
+_env_active_network() {
+    [ -f "$_ACTIVE_NETWORK_FILE" ] || { echo "No network selected. Run: just switch <network>"; return 1; }
+    cat "$_ACTIVE_NETWORK_FILE"
+}
+
+_env_network_file() {
+    local network
+    network=$(_env_active_network) || return 1
+    echo ".env.$network"
+}
+
 # --- Public API ---
 
-# Source the network .env symlink into the current shell (public config only)
+# Source the network .env file into the current shell (public config only)
 env_load_network() {
-    _env_require_network || return 1
-    set -a && source "$_NETWORK_ENV" && set +a
+    local network_file
+    network_file=$(_env_network_file) || return 1
+    [ -f "$network_file" ] || { echo "Network file '$network_file' not found. Run: just add-network <network>"; return 1; }
+    set -a && source "$network_file" && set +a
 }
 
 # Source the fully resolved env (network config + secrets) into the current shell
 env_load() {
     env_load_network || return 1
-    _env_apply_secrets "$NETWORK_NAME"
+    _env_apply_secrets
 }
 
 # Print the effective environment (header + all vars with source attribution)
 env_show() {
-    _env_require_network || return 1
-    set -a && source "$_NETWORK_ENV" && set +a
+    local network_file
+    network_file=$(_env_network_file) || return 1
+    [ -f "$network_file" ] || { echo "Network file '$network_file' not found. Run: just add-network <network>"; return 1; }
+    set -a && source "$network_file" && set +a
 
     echo "Network:  $NETWORK_NAME ($CHAIN_ID)"
     echo "Verifier: $VERIFIER"
@@ -36,14 +54,15 @@ env_show() {
 
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
         local ALLOWED MANIFEST
-        ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$_NETWORK_ENV" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
+        ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$network_file" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
         MANIFEST=$(grep -E '^ *- [A-Z_]' .vars.yaml | sed 's/^ *- //' | sed 's/ .*//' | tr '\n' '|' | sed 's/|$//')
         [ -n "$MANIFEST" ] && ALLOWED="$ALLOWED|$MANIFEST"
-        _env_exports "${NETWORK_NAME:-}" --origin | _env_display_origin "$ALLOWED"
+        _env_exports --origin | _env_display_origin "$ALLOWED"
     else
-        _env_display_raw "$_NETWORK_ENV"
+        _env_display_raw "$network_file"
         _env_display_raw .env
     fi
+    return 0
 }
 
 # --- Core emitter (single source of resolved values) ---
@@ -53,20 +72,16 @@ env_show() {
 # Only passes -p <profile> if that profile is defined in .vars.yaml.
 # Any extra args are forwarded to vars resolve (e.g. --origin).
 _env_exports() {
-    local profile="${1:-}"; shift 2>/dev/null || true
+    local network_file
+    network_file=$(_env_network_file) || return 1
+    local profile="${NETWORK_NAME:-}"
     local profile_flag=""
     if [[ -n "$profile" ]] && [ -f .vars.yaml ] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
         profile_flag="-p $profile"
     fi
     # Inject the local .env files to vars (if present) and resolve the secrets
-    (cat "$_NETWORK_ENV"; [ -f .env ] && cat .env || true) | \
+    (cat "$network_file"; [ -f .env ] && cat .env || true) | \
         vars resolve --partial ${profile_flag} "$@"
-}
-
-# --- Guards ---
-
-_env_require_network() {
-    [ -f "$_NETWORK_ENV" ] || { echo "No network selected. Run: just switch <network>"; return 1; }
 }
 
 # --- Private helpers ---
@@ -74,13 +89,13 @@ _env_require_network() {
 # Eval _env_exports into the current shell; print active profile to stderr.
 # Requires env_load_network to have run first (NETWORK_NAME must be set).
 _env_apply_secrets() {
-    local profile="${1:-}"
+    local profile="${NETWORK_NAME:-}"
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
         if [[ -n "$profile" ]] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
             >&2 echo "vars profile: $profile"
         fi
         local exports
-        exports=$(_env_exports "$profile") || return 1
+        exports=$(_env_exports) || return 1
         eval "$exports"
     elif [ -f .env ]; then
         set -a && source .env && set +a

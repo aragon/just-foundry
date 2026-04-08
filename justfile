@@ -22,22 +22,41 @@ init network="mainnet":
         echo "      You can copy .env.example into .env and define your secrets there."
         echo "      You can install vars with 'just install-vars'"
     fi
-    just switch {{network}}
     git submodule update --init --recursive
+    just add-network {{network}}
+    just switch {{network}}
+
+# Copy a network template from just-foundry into the project
+[group('setup')]
+add-network network:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TEMPLATE="lib/just-foundry/networks/{{network}}.env"
+    TARGET=".env.{{network}}"
+    if [ -f "$TARGET" ]; then
+        echo "Network file '$TARGET' already exists. Skipping."
+        exit 0
+    fi
+    if [ ! -f "$TEMPLATE" ]; then
+        echo "Error: template for '{{network}}' not found at $TEMPLATE"
+        echo "Available networks: $(ls lib/just-foundry/networks/*.env 2>/dev/null | xargs -I{} basename {} .env | tr '\n' ' ')"
+        exit 1
+    fi
+    cp "$TEMPLATE" "$TARGET"
+    echo "Created $TARGET from template."
 
 # Select the active network
 [group('setup')]
 switch network:
     #!/usr/bin/env bash
     set -euo pipefail
-    NETWORKS_DIR="lib/just-foundry/networks"
-    if [ ! -f "$NETWORKS_DIR/{{network}}.env" ]; then
-        echo "Error: network '{{network}}' not found."
-        echo "Available networks: $(ls "$NETWORKS_DIR"/*.env | xargs -I{} basename {} .env | tr '\n' ' ')"
+    if [ ! -f ".env.{{network}}" ]; then
+        echo "Error: '.env.{{network}}' not found. Run: just add-network {{network}}"
         exit 1
     fi
-    ln -sf "networks/{{network}}.env" lib/just-foundry/.env
-    echo "Using network: {{network}}"
+    mkdir -p .just
+    echo "{{network}}" > .just/.active-network
+    echo "Switched to network: {{network}}"
 
 # Install Foundry
 [group('setup')]

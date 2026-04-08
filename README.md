@@ -26,11 +26,13 @@ Initialize for your target network:
 just init sepolia
 ```
 
+This scaffolds `.env.sepolia` from the template, sets it as the active network, and initializes submodules.
+
 Run `just help` to see everything available.
 
 Secrets and env vars:
 
-- Copy `.env.example` into `.env` and customize your deployment settings.
+- Add your secrets and overrides to `.env` at the project root (gitignored).
 - Recommended: Consider creating `.vars.yaml` with the secrets your project needs ([See below](#secrets))
 
 ```yaml
@@ -55,6 +57,7 @@ Available recipes:
 
     [setup]
     init network="mainnet"                  # Initialize the project for a given network (default: mainnet)
+    add-network network                     # Copy a network template from just-foundry into the project
     switch network                          # Select the active network
     setup                                   # Install Foundry
 
@@ -92,7 +95,7 @@ Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `c
 
 ### Network config
 
-Each supported network has a flat config file with public variables at `lib/just-foundry/networks/<name>.env`:
+Each supported network has a template config file at `lib/just-foundry/networks/<name>.env` with public defaults:
 
 ```sh
 RPC_URL="https://eth-sepolia.drpc.org"   # public fallback; override with `vars`
@@ -106,9 +109,9 @@ PLUGIN_REPO_FACTORY_ADDRESS="0x..."
 # ... all Aragon OSx addresses for this network
 ```
 
-These files contain ready to use constants that your Foundry project can consume.
+`just add-network sepolia` copies the template into `.env.sepolia` at your project root. From that point, the local copy is the source of truth — you can edit it freely.
 
-`just switch <network>` creates a symlink `lib/just-foundry/.env → networks/<network>.env`. That symlink defines which network is currently active.
+`just switch sepolia` writes the active network name to `.just/.active-network`. All recipes read from `.env.<network>` based on this value.
 
 ### Secrets
 
@@ -133,7 +136,7 @@ vars resolve
 just env
 ```
 
-Both options are supported — `vars resolve` overrides the values from `lib/just-foundry/.env` and `.env`, if present.
+Both options are supported — `vars resolve` overrides the values from `.env.<network>` and `.env`, if present.
 
 ### Profiles and network switching
 
@@ -234,7 +237,7 @@ seed:
 | zksync | 324 |
 | zksync-sepolia | 300 |
 
-To add a network, open a PR with a new `networks/<name>.env` file.
+To add a new network template, open a PR with a new `networks/<name>.env` file. Projects can then scaffold it with `just add-network <name>`.
 
 ---
 
