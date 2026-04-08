@@ -234,10 +234,11 @@ resolve-script-params:
 [private]
 resolve-verifier-params:
     #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load
     case "${VERIFIER:-}" in
         etherscan)
             [ -n "${ETHERSCAN_API_KEY:-}" ] || { echo "Error: ETHERSCAN_API_KEY is not set" >&2; exit 1; }
-            echo "--verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY" ;;
+            echo "--etherscan-api-key $ETHERSCAN_API_KEY" ;;
         blockscout)
             [ -n "${BLOCKSCOUT_HOST_NAME:-}" ] || { echo "Error: BLOCKSCOUT_HOST_NAME is not set" >&2; exit 1; }
             echo "--verifier blockscout --verifier-url https://$BLOCKSCOUT_HOST_NAME/api?" ;;
