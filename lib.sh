@@ -142,7 +142,23 @@ run_logged() {
         script -q -e -c "$(printf '%q ' "$@")" "$log" || _rc=$?
     fi
     strip_ansi "$log"
+    local _tmp; _tmp=$(mktemp)
+    _filter_forge < "$log" > "$_tmp" && mv "$_tmp" "$log"
     return "$_rc"
+}
+
+# Pipe filter: removes forge progress/spinner noise from stdin.
+# Matches only precise patterns to avoid over-filtering:
+#   - pending tx lines:   [Pending] 0x<64 hex chars>
+#   - timer+progress:     [HH:MM:SS] [---…---] N/M txes|receipts (Xs)
+#   - sequence header:    Sequence #N on <network>
+#   - script(1) header:   Script started/done on …
+_filter_forge() {
+    grep -Ev \
+        -e '\[Pending\] 0x[0-9a-f]{64}[[:space:]]*$' \
+        -e '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\[[-]+\].*(txes|receipts)' \
+        -e 'Sequence #[0-9]+ on ' \
+        -e '^Script (started|done) on '
 }
 
 # --- Core env emitter ---
