@@ -2,46 +2,91 @@
 # env.sh — composable env helpers for just-foundry
 # Usage: source lib/just-foundry/env.sh
 #
+# How network resolution works:
+#   1. The symlink lib/just-foundry/.env → networks/<name>.env is the single
+#      source of truth for which network is active.  NETWORK_NAME is derived
+#      from the symlink target filename: it is NOT read from any .env file.
+#   2. If a local override .env.<network> exists at the project root, its
+#      values are used instead of the upstream template.  The symlink still
+#      determines the network name.
+#   3. Secrets from .env and/or `vars` are layered on top.
+#
 # Public API:
-#   env_load_network       source static network .env into the current shell
-#   env_load               source network config + resolved secrets into the current shell
+#   env_network_name       print the active network name (no sourcing)
+#   env_load               source network config + secrets into the current shell
 #   env_show               print the resolved environment with source attribution
 
-_NETWORK_ENV="lib/just-foundry/.env"
+_NETWORK_SYMLINK="lib/just-foundry/.env"
 _ENV_SKIP="^(NETWORK_NAME|CHAIN_ID|VERIFIER)$"
 _ENV_MASK="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
 
-# --- Public API ---
+# --- Network resolution ---
 
-# Source the network .env symlink into the current shell (public config only)
-env_load_network() {
-    _env_require_network || return 1
-    set -a && source "$_NETWORK_ENV" && set +a
+# Derive the network name from the symlink target filename.
+# e.g. lib/just-foundry/.env → networks/sepolia.env → "sepolia"
+_env_network_name() {
+    [ -L "$_NETWORK_SYMLINK" ] || { echo "No network selected (symlink missing). Run: just switch <network>" >&2; return 1; }
+    local target
+    target=$(readlink "$_NETWORK_SYMLINK")
+    # Strip path prefix and .env suffix: "networks/sepolia.env" → "sepolia"
+    target="${target##*/}"
+    target="${target%.env}"
+    echo "$target"
 }
 
-# Source the fully resolved env (network config + secrets) into the current shell
+# Return the file to source: local override (.env.<network>) if it exists,
+# otherwise the symlink target.
+_env_network_file() {
+    local network
+    network=$(_env_network_name) || return 1
+    local override=".env.$network"
+    if [ -f "$override" ]; then
+        echo "$override"
+    else
+        echo "$_NETWORK_SYMLINK"
+    fi
+}
+
+# --- Public API ---
+
+# Print the active network name (lightweight — no file sourcing).
+env_network_name() {
+    _env_network_name || return 1
+}
+
+# Source network config + resolved secrets into the current shell.
+# Exports NETWORK_NAME (derived from symlink, not from the env file).
 env_load() {
-    env_load_network || return 1
-    _env_apply_secrets "$NETWORK_NAME"
+    local network_file
+    network_file=$(_env_network_file) || return 1
+    set -a && source "$network_file" && set +a
+    # NETWORK_NAME is authoritative from the symlink, not the file
+    export NETWORK_NAME
+    NETWORK_NAME=$(_env_network_name) || return 1
+    _env_apply_secrets
 }
 
 # Print the effective environment (header + all vars with source attribution)
 env_show() {
-    _env_require_network || return 1
-    set -a && source "$_NETWORK_ENV" && set +a
+    local network network_file
+    network=$(_env_network_name) || return 1
+    network_file=$(_env_network_file) || return 1
+    set -a && source "$network_file" && set +a
+    export NETWORK_NAME="$network"
 
     echo "Network:  $NETWORK_NAME ($CHAIN_ID)"
-    echo "Verifier: $VERIFIER"
+    echo "Verifier: ${VERIFIER:-<not set>}"
+    [ -f ".env.$network" ] && echo "Override: .env.$network"
     echo ""
 
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
         local ALLOWED MANIFEST
-        ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$_NETWORK_ENV" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
+        ALLOWED=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$network_file" | cut -d= -f1 | tr '\n' '|' | sed 's/|$//')
         MANIFEST=$(grep -E '^ *- [A-Z_]' .vars.yaml | sed 's/^ *- //' | sed 's/ .*//' | tr '\n' '|' | sed 's/|$//')
         [ -n "$MANIFEST" ] && ALLOWED="$ALLOWED|$MANIFEST"
-        _env_exports "${NETWORK_NAME:-}" --origin | _env_display_origin "$ALLOWED"
+        _env_exports --origin | _env_display_origin "$ALLOWED"
     else
-        _env_display_raw "$_NETWORK_ENV"
+        _env_display_raw "$network_file"
         _env_display_raw .env
     fi
 }
@@ -53,34 +98,30 @@ env_show() {
 # Only passes -p <profile> if that profile is defined in .vars.yaml.
 # Any extra args are forwarded to vars resolve (e.g. --origin).
 _env_exports() {
-    local profile="${1:-}"; shift 2>/dev/null || true
+    local network_file
+    network_file=$(_env_network_file) || return 1
+    local profile
+    profile=$(_env_network_name) || return 1
     local profile_flag=""
-    if [[ -n "$profile" ]] && [ -f .vars.yaml ] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
+    if [ -f .vars.yaml ] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
         profile_flag="-p $profile"
     fi
-    # Inject the local .env files to vars (if present) and resolve the secrets
-    (cat "$_NETWORK_ENV"; [ -f .env ] && cat .env || true) | \
+    (cat "$network_file"; [ -f .env ] && cat .env || true) | \
         vars resolve --partial ${profile_flag} "$@"
-}
-
-# --- Guards ---
-
-_env_require_network() {
-    [ -f "$_NETWORK_ENV" ] || { echo "No network selected. Run: just switch <network>"; return 1; }
 }
 
 # --- Private helpers ---
 
 # Eval _env_exports into the current shell; print active profile to stderr.
-# Requires env_load_network to have run first (NETWORK_NAME must be set).
 _env_apply_secrets() {
-    local profile="${1:-}"
+    local profile
+    profile=$(_env_network_name) || return 1
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
-        if [[ -n "$profile" ]] && grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
+        if grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
             >&2 echo "vars profile: $profile"
         fi
         local exports
-        exports=$(_env_exports "$profile") || return 1
+        exports=$(_env_exports) || return 1
         eval "$exports"
     elif [ -f .env ]; then
         set -a && source .env && set +a
@@ -90,7 +131,7 @@ _env_apply_secrets() {
 _env_mask() {
     local key="$1" value="$2"
     if [[ "$key" =~ $_ENV_MASK ]] && [[ -n "$value" ]]; then
-        echo "${value:0:6}****"
+        echo "${value:0:4}******"
     else
         echo "$value"
     fi

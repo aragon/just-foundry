@@ -20,17 +20,20 @@ import 'lib/just-foundry/justfile'
 # DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
 ```
 
-Initialize for your target network:
+Initialize submodules and set up your target network:
 
 ```sh
+git submodule update --init --recursive
 just init sepolia
 ```
+
+> **Fresh clones:** `just init` imports its recipes from `lib/just-foundry/justfile`, so the submodule needs exist first.
 
 Run `just help` to see everything available.
 
 Secrets and env vars:
 
-- Copy `.env.example` into `.env` and customize your deployment settings.
+- Add your secrets and overrides to `.env` at the project root (gitignored).
 - Recommended: Consider creating `.vars.yaml` with the secrets your project needs ([See below](#secrets))
 
 ```yaml
@@ -55,7 +58,7 @@ Available recipes:
 
     [setup]
     init network="mainnet"                  # Initialize the project for a given network (default: mainnet)
-    switch network                          # Select the active network
+    switch network override=""              # Select the active network (pass "override" for local copy)
     setup                                   # Install Foundry
 
     [script]
@@ -89,13 +92,13 @@ Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `c
 
 ## Environment variables
 
-All variables below are resolved automatically from the active network config when you call `env_load` or `env_load_network`. You can override any of them in your `.env` file or via `vars`.
+All variables below are resolved automatically from the active network config when you call `env_load`. You can override any of them in your `.env` file or via `vars`.
 
 | Variable | Description |
 |---|---|
 | `RPC_URL` | JSON-RPC endpoint (public fallback; override with a private one) |
 | `CHAIN_ID` | EVM chain ID |
-| `NETWORK_NAME` | Network name (e.g. `sepolia`, `mainnet`) |
+| `NETWORK_NAME` | Network name (derived from your last `just switch` or `just init`) |
 | `VERIFIER` | Default verifier (`etherscan`, `blockscout`, `sourcify`, `zksync`, `routescan-mainnet`, `routescan-testnet`) |
 | `BLOCKSCOUT_HOST_NAME` | Blockscout host — required when `VERIFIER=blockscout` |
 | `FOUNDRY_EVM_VERSION` | EVM version override (e.g. `shanghai` for Chiliz) — picked up by Foundry automatically |
@@ -126,12 +129,11 @@ The following are **not** in the network config — supply them in your local `.
 
 ### Network config
 
-Each supported network has a flat config file with public variables at `lib/just-foundry/networks/<name>.env`:
+Each supported network has a config file with public variables at `lib/just-foundry/networks/<name>.env`:
 
 ```sh
 RPC_URL="https://eth-sepolia.drpc.org"   # public fallback; override with `vars`
 CHAIN_ID="11155111"
-NETWORK_NAME="sepolia"
 VERIFIER="etherscan"
 BLOCKSCOUT_HOST_NAME="eth-sepolia.blockscout.com" # alternative
 
@@ -140,9 +142,19 @@ PLUGIN_REPO_FACTORY_ADDRESS="0x..."
 # ... all Aragon OSx addresses for this network
 ```
 
-These files contain ready to use constants that your Foundry project can consume.
+`just switch <network>` creates a symlink `lib/just-foundry/.env → networks/<network>.env`. The symlink defines which network is active: `NETWORK_NAME` is exported with the appropriate value.
 
-`just switch <network>` creates a symlink `lib/just-foundry/.env → networks/<network>.env`. That symlink defines which network is currently active.
+### Local overrides
+
+To customize a network's config (e.g. change the RPC URL or add addresses for a custom deployment), create a local override:
+
+```sh
+just switch sepolia override
+```
+
+This copies the upstream template to `.env.sepolia` at your project root. From that point, the local copy is used instead of the upstream file: edit it freely. The symlink still determines `NETWORK_NAME`.
+
+Add `.env.*` to your project's `.gitignore` to keep override files out of version control.
 
 ### Secrets
 
@@ -167,7 +179,7 @@ vars resolve
 just env
 ```
 
-Both options are supported — `vars resolve` overrides the values from `lib/just-foundry/.env` and `.env`, if present.
+Both options are supported — `vars resolve` overrides the values from the active network config and `.env`, if present.
 
 ### Profiles and network switching
 
@@ -246,7 +258,7 @@ seed:
     just run script/Seed.s.sol:Seed --slow --legacy
 ```
 
-`ENV_RESOLVE_LIB` loads the primitives to resolve and use environment variables from the available sources (`env_load_network`, `env_load`, and `env_show`).
+`ENV_RESOLVE_LIB` loads the environment helpers. The main entry points are `env_load` (source config + secrets) and `env_network_name` (lightweight — just the active network name).
 
 ---
 

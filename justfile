@@ -25,21 +25,29 @@ init network="mainnet":
         echo "      You can install vars with 'just install-vars'"
     fi
     just switch {{ network }}
-    git submodule update --init --recursive
 
-# Select the active network
+# Select the active network (pass "override" to create a local editable copy)
 [group('setup')]
-switch network:
+switch network override="":
     #!/usr/bin/env bash
     set -euo pipefail
-    NETWORKS_DIR="lib/just-foundry/networks"
-    if [ ! -f "$NETWORKS_DIR/{{ network }}.env" ]; then
+    TEMPLATE="lib/just-foundry/networks/{{ network }}.env"
+    if [ ! -f "$TEMPLATE" ]; then
         echo "Error: network '{{ network }}' not found."
-        echo "Available networks: $(ls "$NETWORKS_DIR"/*.env | xargs -I{} basename {} .env | tr '\n' ' ')"
+        echo "Available networks: $(ls lib/just-foundry/networks/*.env 2>/dev/null | xargs -I{} basename {} .env | tr '\n' ' ')"
         exit 1
     fi
     ln -sf "networks/{{ network }}.env" lib/just-foundry/.env
-    echo "Using network: {{ network }}"
+    if [ "{{ override }}" = "override" ]; then
+        LOCAL=".env.{{ network }}"
+        if [ -f "$LOCAL" ]; then
+            echo "Override '$LOCAL' already exists. Skipping copy."
+        else
+            cp "$TEMPLATE" "$LOCAL"
+            echo "Created local override: $LOCAL"
+        fi
+    fi
+    echo "Switched to network: {{ network }}"
 
 # Install Foundry
 [group('setup')]
@@ -89,7 +97,8 @@ predeploy:
 deploy *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load_network    # read $NETWORK_NAME
+    source {{ ENV_RESOLVE_LIB }}
+    NETWORK_NAME=$(env_network_name) || exit 1
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just test 2>&1 | tee -a "$LOG_FILE"
@@ -156,7 +165,7 @@ test-fork *args:
 test-coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load
     which lcov > /dev/null || { echo "Error: install lcov (sudo apt install lcov)"; exit 1; }
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
@@ -185,7 +194,7 @@ ipfs-pin file:
 [group('develop')]
 clean:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     $FORGE clean
     rm -rf ./out ./zkout lcov.info* ./report
@@ -194,7 +203,7 @@ clean:
 [group('develop')]
 storage-info contract:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     $FORGE inspect {{ contract }} storage-layout
 
@@ -205,7 +214,7 @@ check-upgrade from to:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq &>/dev/null || { echo "Error: jq is required (sudo apt install jq / brew install jq)"; exit 1; }
-    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     $FORGE build --quiet $BUILD_PARAMS
@@ -250,7 +259,7 @@ verify verifier="" script=DEPLOY_SCRIPT:
 [private]
 resolve-forge:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
         echo "forge-zksync"
@@ -262,7 +271,7 @@ resolve-forge:
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         echo "--zksync"
     fi
