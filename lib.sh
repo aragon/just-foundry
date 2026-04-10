@@ -112,10 +112,13 @@ env_show() {
 # Handles both GNU sed (Linux) and BSD sed (macOS).
 strip_ansi() {
     local file="$1"
+    # 1. s/\r$// — normalize \r\n line endings written by script(1)
+    # 2. /\r/d   — drop lines with \r mid-line (forge progress overwrite lines)
+    # 3. strip remaining ANSI escape codes
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        sed -i '' $'s/\x1b\[[0-9;]*[A-Za-z]//g; s/\r.*$//g; /^[[:space:]]*$/d' "$file"
+        sed -i '' $'s/\r$//; /\r/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
     else
-        sed -i $'s/\x1b\[[0-9;]*[A-Za-z]//g; s/\r.*$//g; /^[[:space:]]*$/d' "$file"
+        sed -i $'s/\r$//; /\r/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
     fi
 }
 
