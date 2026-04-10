@@ -62,10 +62,12 @@ Available recipes:
     setup                                   # Install Foundry
 
     [script]
-    predeploy                               # Simulate the deploy script
-    deploy                                  # Deploy: run tests, broadcast, tee to log
-    run script *args                        # Run a forge script (broadcast)
-    simulate script                         # Simulate a forge script (no broadcast)
+    predeploy                               # Dry-run the deploy script (no broadcast)
+    deploy *args                            # Deploy: run tests then broadcast, with log
+
+    [script-base]
+    run logName="" script *args             # Broadcast a forge script (logName enables logging)
+    dry-run script                          # Simulate running a forge script (no broadcast)
 
     [test]
     test *args                              # Run all unit tests
@@ -244,21 +246,54 @@ DEPLOY_SCRIPT := "script/MyDeploy.s.sol:MyScript"
 
 ### Add your own recipes
 
-Define them in your root `justfile` after the import:
+Define them in your root `justfile` after the import.
+
+**Broadcast with a log** — use `just run <logName> <script>` as the building block:
 
 ```just
 default: help
 import 'lib/just-foundry/justfile'
 
-# Seed the protocol with test data
+# Run the upgrade script and log output to logs/upgrade-<network>-<timestamp>.log
+upgrade:
+    just run "upgrade" script/Upgrade.s.sol:Upgrade
+
+# Seed test data (no logs)
 seed:
-    #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
-    just run script/Seed.s.sol:Seed
-    just run script/Seed.s.sol:Seed --slow --legacy
+    just run "" script/Seed.s.sol:Seed
 ```
 
-`ENV_RESOLVE_LIB` loads the environment helpers. The main entry points are `env_load` (source config + secrets) and `env_network_name` (lightweight — just the active network name).
+**Dry-run** — use `just dry-run <script>`:
+
+```just
+check:
+    just dry-run script/Check.s.sol:Check
+```
+
+**Custom logic before broadcasting** — source `{{ JUST_LIB }}` directly:
+
+```just
+deploy-and-verify *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source {{ JUST_LIB }} && env_load
+    echo "Deploying to $NETWORK_NAME..."
+    just run deploy script/Deploy.s.sol:Deploy {{ args }}
+    just verify
+```
+
+**Custom logged command** — call `run_logged` directly for non-forge executables:
+
+```just
+snapshot:
+    #!/usr/bin/env bash
+    source {{ JUST_LIB }} && env_load
+    LOG="logs/snapshot-$NETWORK_NAME-$(date +%y-%m-%d-%H-%M).log"
+    run_logged "$LOG" my-command --network "$NETWORK_NAME"
+    echo "Log: $LOG"
+```
+
+`JUST_LIB` exposes: `env_load [--verbose]`, `env_network_name`, `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
 
 ---
 

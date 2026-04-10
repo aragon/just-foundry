@@ -2,9 +2,9 @@
 
 set shell := ["bash", "-c"]
 set dotenv-load := false
-set allow-duplicate-variables := true
+set allow-duplicate-variables
 
-ENV_RESOLVE_LIB := "lib/just-foundry/env.sh"
+JUST_LIB := "lib/just-foundry/lib.sh"
 DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
 
 # Show available commands
@@ -91,51 +91,51 @@ install-vars:
     sudo mv vars /usr/local/bin/
     echo "vars installed on /usr/local/bin/."
 
-# Simulate the deploy script
+# Dry-run the deploy script (no broadcast)
 [group('script')]
 predeploy:
-    just simulate {{ DEPLOY_SCRIPT }}
+    just dry-run {{ DEPLOY_SCRIPT }}
 
-# Deploy: run tests, broadcast, tee to log
+# Deploy: run tests then broadcast, logging output to logs/deploy-<network>-<timestamp>.log
 [group('script')]
 deploy *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }}
-    NETWORK_NAME=$(env_network_name) || exit 1
-    mkdir -p logs artifacts
-    LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
-    just test 2>&1 | tee -a "$LOG_FILE"
-    just run {{ DEPLOY_SCRIPT }} "{{ args }}" 2>&1 | tee -a "$LOG_FILE"
-    echo "Logs saved in $LOG_FILE"
+    just test
+    just run "deploy" {{ DEPLOY_SCRIPT }} {{ args }}
 
-# Run a forge script (broadcast)
-[group('script')]
-run script *args:
+# Broadcast a forge script — pass logName to log output to logs/<logName>-<network>-<timestamp>.log
+[group('script-base')]
+run logName script *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
+    source {{ JUST_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     SCRIPT_PARAMS=$(just resolve-script-params) || exit 1
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
-    $FORGE script {{ script }} \
+    CMD=($FORGE script {{ script }} \
         --rpc-url "$RPC_URL" \
         --retries 10 --delay 10 \
         --broadcast --verify \
         $BUILD_PARAMS $SCRIPT_PARAMS $VERIFIER_PARAMS \
-        -vvv {{ args }}
+        -vvv {{ args }})
+    if [ -n "{{ logName }}" ]; then
+        LOG="logs/{{ logName }}-$NETWORK_NAME-$(date +%y-%m-%d-%H-%M).log"
+        mkdir -p logs
+        run_logged "$LOG" "${CMD[@]}"
+        echo "Log: $LOG"
+    else
+        "${CMD[@]}"
+    fi
 
-# Simulate a forge script (no broadcast)
-[group('script')]
-simulate script:
+# Simulate running a forge script (no broadcast)
+[group('script-base')]
+dry-run script:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
+    source {{ JUST_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     export SIMULATION=true
-    echo "export SIMULATION=true"
     $FORGE script {{ script }} \
         --rpc-url "$RPC_URL" \
         $BUILD_PARAMS \
@@ -145,7 +145,7 @@ simulate script:
 [group('test')]
 test *args:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     ETHERSCAN_API_KEY="" $FORGE test $BUILD_PARAMS -vvv --no-match-path "./test/*fork*/*.sol" {{ args }}
@@ -155,7 +155,7 @@ test *args:
 test-fork *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
+    source {{ JUST_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     $FORGE test $BUILD_PARAMS -vvv \
@@ -169,7 +169,7 @@ test-fork *args:
 test-coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     which lcov > /dev/null || { echo "Error: install lcov (sudo apt install lcov)"; exit 1; }
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
@@ -183,7 +183,7 @@ test-coverage:
 [group('helpers')]
 env:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }}
+    source {{ JUST_LIB }}
     env_show
 
 # Pin a file to IPFS via Pinata (requires PINATA_JWT in vars or .env)
@@ -191,14 +191,14 @@ env:
 ipfs-pin file:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     bash lib/just-foundry/scripts/ipfs-pin.sh "{{ file }}"
 
 # Clean compiler artifacts and coverage reports
 [group('develop')]
 clean:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     $FORGE clean
     rm -rf ./out ./zkout lcov.info* ./report
@@ -207,7 +207,7 @@ clean:
 [group('develop')]
 storage-info contract:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     $FORGE inspect {{ contract }} storage-layout
 
@@ -218,7 +218,7 @@ check-upgrade from to:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq &>/dev/null || { echo "Error: jq is required (sudo apt install jq / brew install jq)"; exit 1; }
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     $FORGE build --quiet $BUILD_PARAMS
@@ -244,7 +244,7 @@ check-upgrade from to:
 anvil:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
+    source {{ JUST_LIB }} && env_load --verbose
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
 # Verify all contracts from the latest broadcast (verifier: etherscan|blockscout|sourcify)
@@ -252,7 +252,7 @@ anvil:
 verify verifier="" script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
+    source {{ JUST_LIB }} && env_load --verbose
     [ -n "{{ verifier }}" ] && export VERIFIER="{{ verifier }}"
     [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
@@ -263,7 +263,7 @@ verify verifier="" script=DEPLOY_SCRIPT:
 [private]
 resolve-forge:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }}
+    source {{ JUST_LIB }}
     [ -z "${CHAIN_ID:-}" ] && env_load
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
@@ -276,7 +276,7 @@ resolve-forge:
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         echo "--zksync"
     fi
@@ -326,7 +326,7 @@ resolve-verifier-params:
 [group('helpers')]
 balance:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
     BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
     echo "Balance of $DEPLOYER_ADDRESS ($NETWORK_NAME):"
@@ -335,14 +335,14 @@ balance:
 [private]
 gas-price:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     echo "Gas price ($NETWORK_NAME):"
     cast gas-price --rpc-url "$RPC_URL"
 
 [private]
 nonce:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
     cast nonce "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL"
 
@@ -350,7 +350,7 @@ nonce:
 [private]
 clean-nonce nonce:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
     cast send --private-key "$DEPLOYER_KEY" \
         --rpc-url "$RPC_URL" \
@@ -371,7 +371,7 @@ clean-nonces *nonces:
 refund:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ JUST_LIB }} && env_load
     if [ -z "${REFUND_ADDRESS:-}" ] || [[ "$REFUND_ADDRESS" =~ ^0x0{39}[0-9a-fA-F]$ ]]; then
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1
