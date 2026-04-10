@@ -184,13 +184,19 @@ ipfs-pin file:
 # Clean compiler artifacts and coverage reports
 [group('develop')]
 clean:
-    forge clean
+    #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    FORGE=$(just resolve-forge) || exit 1
+    $FORGE clean
     rm -rf ./out ./zkout lcov.info* ./report
 
 # Show the storage layout of a contract
 [group('develop')]
 storage-info contract:
-    forge inspect {{ contract }} storage-layout
+    #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    FORGE=$(just resolve-forge) || exit 1
+    $FORGE inspect {{ contract }} storage-layout
 
 # Check storage layout upgrade compatibility between two contracts (requires jq)
 # Example: just check-upgrade MyContractV1 MyContractV2
@@ -199,9 +205,12 @@ check-upgrade from to:
     #!/usr/bin/env bash
     set -euo pipefail
     command -v jq &>/dev/null || { echo "Error: jq is required (sudo apt install jq / brew install jq)"; exit 1; }
-    forge build --quiet
-    REF=$(forge inspect {{ from }} storage-layout --json)
-    NEW=$(forge inspect {{ to }} storage-layout --json)
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    FORGE=$(just resolve-forge) || exit 1
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
+    $FORGE build --quiet $BUILD_PARAMS
+    REF=$($FORGE inspect {{ from }} storage-layout --json)
+    NEW=$($FORGE inspect {{ to }} storage-layout --json)
     ERRORS=0
     while IFS=$'\t' read -r slot offset label; do
         match=$(echo "$NEW" | jq -r --arg s "$slot" --argjson o "$offset" --arg l "$label" \

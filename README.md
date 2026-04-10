@@ -270,6 +270,8 @@ seed:
 
 To add a network, open a PR with a new `networks/<name>.env` file.
 
+> **ZkSync note:** The `zksync` and `zksync-sepolia` networks require a separate Foundry fork. Run `just setup-zksync` to install it — this places `forge-zksync` alongside the standard `forge` binary, and recipes will pick the right one automatically based on the active network.
+
 ---
 
 ## Debug helpers
@@ -283,7 +285,6 @@ just nonce               # current deployer nonce
 just clean-nonce 27      # cancel a stuck tx by replacing it at nonce 27
 just clean-nonces 2 3 4  # cancel multiple stuck txs
 just refund              # sweep remaining balance to REFUND_ADDRESS
-just setup-zksync        # install foundry-zksync alongside standard Foundry (required for zksync / zksync-sepolia networks)
 ```
 
 ---
