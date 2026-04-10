@@ -156,7 +156,7 @@ run_logged() {
 _filter_forge() {
     grep -Ev \
         -e '\[Pending\] 0x[0-9a-f]{64}[[:space:]]*$' \
-        -e '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\[[-]+\].*(txes|receipts)' \
+        -e '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\[[-#]+\].*(txes|receipts)' \
         -e 'Sequence #[0-9]+ on ' \
         -e '^Script (started|done) on '
 }
