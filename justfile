@@ -110,7 +110,7 @@ deploy *args:
 run script *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     SCRIPT_PARAMS=$(just resolve-script-params) || exit 1
@@ -127,7 +127,7 @@ run script *args:
 simulate script:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     export SIMULATION=true
@@ -151,7 +151,7 @@ test *args:
 test-fork *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     $FORGE test $BUILD_PARAMS -vvv \
@@ -240,7 +240,7 @@ check-upgrade from to:
 anvil:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
 # Verify all contracts from the latest broadcast (verifier: etherscan|blockscout|sourcify)
@@ -248,7 +248,7 @@ anvil:
 verify verifier="" script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load --verbose
     [ -n "{{ verifier }}" ] && export VERIFIER="{{ verifier }}"
     [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1

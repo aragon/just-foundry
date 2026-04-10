@@ -56,14 +56,26 @@ env_network_name() {
 
 # Source network config + resolved secrets into the current shell.
 # Exports NETWORK_NAME (derived from symlink, not from the env file).
+# Pass --verbose to print a status line to stderr.
 env_load() {
-    local network_file
+    local verbose=false
+    [ "${1:-}" = "--verbose" ] && verbose=true
+
+    local network network_file
+    network=$(_env_network_name) || return 1
     network_file=$(_env_network_file) || return 1
     set -a && source "$network_file" && set +a
-    # NETWORK_NAME is authoritative from the symlink, not the file
-    export NETWORK_NAME
-    NETWORK_NAME=$(_env_network_name) || return 1
+    export NETWORK_NAME="$network"
     _env_apply_secrets
+
+    if $verbose; then
+        local status="$network"
+        [ -f ".env.$network" ] && status="$status (override: .env.$network)"
+        if command -v vars &>/dev/null && [ -f .vars.yaml ] && grep -qE "^\s+${network}:" .vars.yaml 2>/dev/null; then
+            status="$status (vars: $network)"
+        fi
+        >&2 echo "[env] $status"
+    fi
 }
 
 # Print the effective environment (header + all vars with source attribution)
@@ -112,14 +124,11 @@ _env_exports() {
 
 # --- Private helpers ---
 
-# Eval _env_exports into the current shell; print active profile to stderr.
+# Eval _env_exports into the current shell.
 _env_apply_secrets() {
     local profile
     profile=$(_env_network_name) || return 1
     if command -v vars &>/dev/null && [ -f .vars.yaml ]; then
-        if grep -qE "^\s+${profile}:" .vars.yaml 2>/dev/null; then
-            >&2 echo "vars profile: $profile"
-        fi
         local exports
         exports=$(_env_exports) || return 1
         eval "$exports"
