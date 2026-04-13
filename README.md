@@ -36,7 +36,7 @@ Secrets and env vars:
 ```yaml
 # .vars.yaml
 keys:
-  - DEPLOYMENT_PRIVATE_KEY
+  - DEPLOYER_KEY
   - ETHERSCAN_API_KEY
   - RPC_URL
   # - ...
@@ -61,7 +61,6 @@ Available recipes:
     [script]
     predeploy                               # Simulate the deploy script
     deploy                                  # Deploy: run tests, broadcast, tee to log
-    resume-deploy                           # Resume a pending deployment
     run script *args                        # Run a forge script (broadcast)
     simulate script                         # Simulate a forge script (no broadcast)
 
@@ -85,6 +84,41 @@ Available recipes:
 ```
 
 Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `clean-nonces`, `refund`. See [Debug helpers](#debug-helpers).
+
+---
+
+## Environment variables
+
+All variables below are resolved automatically from the active network config when you call `env_load` or `env_load_network`. You can override any of them in your `.env` file or via `vars`.
+
+| Variable | Description |
+|---|---|
+| `RPC_URL` | JSON-RPC endpoint (public fallback; override with a private one) |
+| `CHAIN_ID` | EVM chain ID |
+| `NETWORK_NAME` | Network name (e.g. `sepolia`, `mainnet`) |
+| `VERIFIER` | Default verifier (`etherscan`, `blockscout`, `sourcify`, `zksync`, `routescan-mainnet`, `routescan-testnet`) |
+| `BLOCKSCOUT_HOST_NAME` | Blockscout host — required when `VERIFIER=blockscout` |
+| `FOUNDRY_EVM_VERSION` | EVM version override (e.g. `shanghai` for Chiliz) — picked up by Foundry automatically |
+| `DAO_FACTORY_ADDRESS` | Aragon OSx `DAOFactory` |
+| `PLUGIN_REPO_FACTORY_ADDRESS` | Aragon OSx `PluginRepoFactory` |
+| `PLUGIN_SETUP_PROCESSOR_ADDRESS` | Aragon OSx `PluginSetupProcessor` |
+| `MANAGEMENT_DAO_ADDRESS` | Aragon management DAO |
+| `MANAGEMENT_DAO_MULTISIG_ADDRESS` | Aragon management DAO multisig |
+| `TOKEN_VOTING_PLUGIN_REPO_ADDRESS` | Token Voting plugin repo |
+| `MULTISIG_PLUGIN_REPO_ADDRESS` | Multisig plugin repo |
+| `LOCK_TO_VOTE_PLUGIN_REPO_ADDRESS` | Lock to Vote plugin repo |
+| `ADMIN_PLUGIN_REPO_ADDRESS` | Admin plugin repo |
+| `SPP_PLUGIN_REPO_ADDRESS` | Staged Proposal Processor plugin repo |
+
+The following are **not** in the network config — supply them in your local `.env` or via `vars`:
+
+| Variable | Description |
+|---|---|
+| `DEPLOYER_KEY` | Deployer wallet private key |
+| `ETHERSCAN_API_KEY` | Required when `VERIFIER=etherscan` |
+| `PINATA_JWT` | Required for `just ipfs-pin` |
+| `REFUND_ADDRESS` | Destination for `just refund` |
+| `FORK_BLOCK_NUMBER` | Pin fork tests to a specific block (optional) |
 
 ---
 
@@ -123,7 +157,7 @@ Network environment files only contain public values that you can override. Secr
 just install-vars
 
 # Store your secrets and overrides
-vars set DEPLOYMENT_PRIVATE_KEY
+vars set DEPLOYER_KEY
 vars set ETHERSCAN_API_KEY
 vars set sepolia/RPC_URL "https://sepolia.drpc.org"
 vars set hoodi/RPC_URL "https://hoodi.drpc.org"
@@ -144,26 +178,26 @@ When you run `just switch sepolia`, the active network becomes `sepolia`. You ma
 ```yaml
 # Env vars required by the project
 keys:
-  - DEPLOYMENT_PRIVATE_KEY
+  - DEPLOYER_KEY
   - ETHERSCAN_API_KEY
   - RPC_URL
 
 # Profiles: mapping specific env vars, depending on the environment
 profiles:
   sepolia:
-    DEPLOYMENT_PRIVATE_KEY: sepolia/DEPLOYMENT_PRIVATE_KEY
+    DEPLOYER_KEY: sepolia/DEPLOYER_KEY
     RPC_URL: sepolia/RPC_URL
   mainnet:
-    DEPLOYMENT_PRIVATE_KEY: mainnet/DEPLOYMENT_PRIVATE_KEY
+    DEPLOYER_KEY: mainnet/DEPLOYER_KEY
 ```
 
 This lets you store per-network credentials in your:
 
 ```sh
 # store your secrets locally
-vars set sepolia/DEPLOYMENT_PRIVATE_KEY   # testnet wallet
-vars set mainnet/DEPLOYMENT_PRIVATE_KEY   # prod wallet
-vars set sepolia/RPC_URL                  # private RPC endpoint
+vars set sepolia/DEPLOYER_KEY     # testnet wallet
+vars set mainnet/DEPLOYER_KEY     # prod wallet
+vars set sepolia/RPC_URL          # private RPC endpoint
 ```
 
 ### `just env`
@@ -174,7 +208,7 @@ Shows the fully resolved environment — every variable once, with its effective
 Network:  sepolia (11155111)
 Verifier: etherscan
 
-  [vars]     DEPLOYMENT_PRIVATE_KEY         1234****
+  [vars]     DEPLOYER_KEY                   1234****
   [vars]     ETHERSCAN_API_KEY              abcd****
   [dotenv]   RPC_URL                        https://sepolia.drpc.org
   [dotenv]   DAO_FACTORY_ADDRESS            0xB815791c...
@@ -235,6 +269,8 @@ seed:
 | zksync-sepolia | 300 |
 
 To add a network, open a PR with a new `networks/<name>.env` file.
+
+> **ZkSync note:** The `zksync` and `zksync-sepolia` networks require a separate Foundry fork. Run `just setup-zksync` to install it — this places `forge-zksync` alongside the standard `forge` binary, and recipes will pick the right one automatically based on the active network.
 
 ---
 

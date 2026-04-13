@@ -142,6 +142,6 @@ _env_display_raw() {
         [[ "$key" =~ $_ENV_SKIP ]] && continue
         value="${rest#\"}" ; value="${value%\"}"
         value="${value#\'}" ; value="${value%\'}"
-        _env_print "$key" "$value"
+        _env_print "$key" "$value" "dotenv"
     done < "$file"
 }

@@ -1,9 +1,11 @@
 # NOTE: All recipes imported from this file will run on the path importing it
+
 set shell := ["bash", "-c"]
 set dotenv-load := false
+set allow-duplicate-variables := true
 
 ENV_RESOLVE_LIB := "lib/just-foundry/env.sh"
-DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"   # Default deploy script: override in root justfile
+DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
 
 # Show available commands
 help:
@@ -22,7 +24,7 @@ init network="mainnet":
         echo "      You can copy .env.example into .env and define your secrets there."
         echo "      You can install vars with 'just install-vars'"
     fi
-    just switch {{network}}
+    just switch {{ network }}
     git submodule update --init --recursive
 
 # Select the active network
@@ -31,18 +33,41 @@ switch network:
     #!/usr/bin/env bash
     set -euo pipefail
     NETWORKS_DIR="lib/just-foundry/networks"
-    if [ ! -f "$NETWORKS_DIR/{{network}}.env" ]; then
-        echo "Error: network '{{network}}' not found."
+    if [ ! -f "$NETWORKS_DIR/{{ network }}.env" ]; then
+        echo "Error: network '{{ network }}' not found."
         echo "Available networks: $(ls "$NETWORKS_DIR"/*.env | xargs -I{} basename {} .env | tr '\n' ' ')"
         exit 1
     fi
-    ln -sf "networks/{{network}}.env" lib/just-foundry/.env
-    echo "Using network: {{network}}"
+    ln -sf "networks/{{ network }}.env" lib/just-foundry/.env
+    echo "Using network: {{ network }}"
 
 # Install Foundry
 [group('setup')]
 setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
     curl -L https://foundry.paradigm.xyz | bash
+    export PATH="$HOME/.foundry/bin:$PATH"
+    foundryup -v stable
+
+# Install foundry-zksync alongside standard Foundry (forge-zksync / cast-zksync)
+[private]
+setup-zksync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v forge-zksync &>/dev/null; then
+        echo "forge-zksync is already installed ($(forge-zksync --version | head -1))"
+        exit 0
+    fi
+    echo "Installing foundry-zksync..."
+    curl -L https://raw.githubusercontent.com/matter-labs/foundry-zksync/main/install-foundry-zksync | bash
+    export PATH="$HOME/.foundry/bin:$PATH"
+    foundryup-zksync
+    mv ~/.foundry/bin/forge ~/.foundry/bin/forge-zksync
+    mv ~/.foundry/bin/cast ~/.foundry/bin/cast-zksync
+    echo "Reinstalling standard Foundry to restore forge / cast..."
+    just setup
+    echo "Done. Use 'forge' for standard EVM and 'forge-zksync' for ZkSync networks."
 
 # Install vars (secret manager — recommended, https://github.com/vars-cli/vars)
 [private]
@@ -57,29 +82,18 @@ install-vars:
 # Simulate the deploy script
 [group('script')]
 predeploy:
-    just simulate {{DEPLOY_SCRIPT}}
+    just simulate {{ DEPLOY_SCRIPT }}
 
 # Deploy: run tests, broadcast, tee to log
 [group('script')]
-deploy:
+deploy *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $NETWORK_NAME
+    source {{ ENV_RESOLVE_LIB }} && env_load_network    # read $NETWORK_NAME
     mkdir -p logs artifacts
     LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
     just test 2>&1 | tee -a "$LOG_FILE"
-    just run {{DEPLOY_SCRIPT}} 2>&1 | tee -a "$LOG_FILE"
-    echo "Logs saved in $LOG_FILE"
-
-# Resume a pending deployment
-[group('script')]
-resume-deploy:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load_network    # read $NETWORK_NAME
-    mkdir -p logs artifacts
-    LOG_FILE="logs/deployment-$NETWORK_NAME-$(date +"%y-%m-%d-%H-%M").log"
-    just run {{DEPLOY_SCRIPT}} --resume 2>&1 | tee -a "$LOG_FILE"
+    just run {{ DEPLOY_SCRIPT }} "{{ args }}" 2>&1 | tee -a "$LOG_FILE"
     echo "Logs saved in $LOG_FILE"
 
 # Run a forge script (broadcast)
@@ -87,27 +101,29 @@ resume-deploy:
 run script *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     SCRIPT_PARAMS=$(just resolve-script-params) || exit 1
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
-    forge script {{script}} \
+    $FORGE script {{ script }} \
         --rpc-url "$RPC_URL" \
         --retries 10 --delay 10 \
         --broadcast --verify \
         $BUILD_PARAMS $SCRIPT_PARAMS $VERIFIER_PARAMS \
-        -vvv {{args}}
+        -vvv {{ args }}
 
 # Simulate a forge script (no broadcast)
 [group('script')]
 simulate script:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    FORGE=$(just resolve-forge) || exit 1
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
     export SIMULATION=true
     echo "export SIMULATION=true"
-    BUILD_PARAMS=$(just resolve-build-params) || exit 1
-    forge script {{script}} \
+    $FORGE script {{ script }} \
         --rpc-url "$RPC_URL" \
         $BUILD_PARAMS \
         -vvv
@@ -116,32 +132,35 @@ simulate script:
 [group('test')]
 test *args:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
-    ETHERSCAN_API_KEY="" forge test $BUILD_PARAMS -vvv --no-match-path "./test/*fork*/*.sol" {{args}}
+    ETHERSCAN_API_KEY="" $FORGE test $BUILD_PARAMS -vvv --no-match-path "./test/*fork*/*.sol" {{ args }}
 
 # Run fork tests (requires RPC_URL)
 [group('test')]
 test-fork *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
-    forge test $BUILD_PARAMS -vvv \
+    $FORGE test $BUILD_PARAMS -vvv \
         --match-path "./test/*fork*/*.sol" \
         --rpc-url "$RPC_URL" \
         ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER} \
-        {{args}}
+        {{ args }}
 
 # Generate HTML coverage report under ./report
 [group('test')]
 test-coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load_network
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
     which lcov > /dev/null || { echo "Error: install lcov (sudo apt install lcov)"; exit 1; }
+    FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
-    forge coverage --report lcov $BUILD_PARAMS
+    $FORGE coverage --report lcov $BUILD_PARAMS
     lcov --remove lcov.info -o lcov.info.pruned 'test/**/*.sol' 'script/**/*.sol'
     genhtml lcov.info.pruned -o report
     which open > /dev/null && open report/index.html || true
@@ -151,7 +170,7 @@ test-coverage:
 [group('helpers')]
 env:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}}
+    source {{ ENV_RESOLVE_LIB }}
     env_show
 
 # Pin a file to IPFS via Pinata (requires PINATA_JWT in vars or .env)
@@ -159,46 +178,92 @@ env:
 ipfs-pin file:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
-    bash lib/just-foundry/scripts/ipfs-pin.sh "{{file}}"
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    bash lib/just-foundry/scripts/ipfs-pin.sh "{{ file }}"
 
 # Clean compiler artifacts and coverage reports
 [group('develop')]
 clean:
-    forge clean
+    #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    FORGE=$(just resolve-forge) || exit 1
+    $FORGE clean
     rm -rf ./out ./zkout lcov.info* ./report
 
 # Show the storage layout of a contract
 [group('develop')]
 storage-info contract:
-    forge inspect {{contract}} storage-layout
+    #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    FORGE=$(just resolve-forge) || exit 1
+    $FORGE inspect {{ contract }} storage-layout
+
+# Check storage layout upgrade compatibility between two contracts (requires jq)
+# Example: just check-upgrade MyContractV1 MyContractV2
+[group('develop')]
+check-upgrade from to:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v jq &>/dev/null || { echo "Error: jq is required (sudo apt install jq / brew install jq)"; exit 1; }
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    FORGE=$(just resolve-forge) || exit 1
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
+    $FORGE build --quiet $BUILD_PARAMS
+    REF=$($FORGE inspect {{ from }} storage-layout --json)
+    NEW=$($FORGE inspect {{ to }} storage-layout --json)
+    ERRORS=0
+    while IFS=$'\t' read -r slot offset label; do
+        match=$(echo "$NEW" | jq -r --arg s "$slot" --argjson o "$offset" --arg l "$label" \
+            '.storage[] | select(.slot==$s and .offset==$o and .label==$l) | .label')
+        if [ -z "$match" ]; then
+            echo "  INCOMPATIBLE: '$label' at slot $slot offset $offset — missing or moved in {{ to }}"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done < <(echo "$REF" | jq -r '.storage[] | select(.label != "__gap") | [.slot, .offset, .label] | @tsv')
+    if [ "$ERRORS" -gt 0 ]; then
+        echo "Storage layout check FAILED ($ERRORS incompatible slot(s)): {{ from }} → {{ to }}"
+        exit 1
+    fi
+    echo "Storage layout check passed: {{ from }} → {{ to }} is safe to upgrade"
 
 # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
 [group('develop')]
 anvil:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
-# Verify all contracts from the latest broadcast (verifier: etherscan|blockscout|sourcify, default: from network config)
+# Verify all contracts from the latest broadcast (verifier: etherscan|blockscout|sourcify)
 [group('verification')]
 verify verifier="" script=DEPLOY_SCRIPT:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
-    [ -n "{{verifier}}" ] && export VERIFIER="{{verifier}}"
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    [ -n "{{ verifier }}" ] && export VERIFIER="{{ verifier }}"
     [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
-    SCRIPT_FILE=$(basename "{{script}}" | cut -d: -f1)
+    SCRIPT_FILE=$(basename "{{ script }}" | cut -d: -f1)
     bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
 
-# Compiler flags (zksync requires foundry-zksync — https://github.com/matter-labs/foundry-zksync)
+# Forge binary: forge for standard EVM, forge-zksync for ZkSync networks (chain 324/300)
+[private]
+resolve-forge:
+    #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
+    if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
+        command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
+        echo "forge-zksync"
+    else
+        echo "forge"
+    fi
+
+# Compiler flags (--zksync for ZkSync networks)
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
+    source {{ ENV_RESOLVE_LIB }} && env_load_network
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
-        forge --version 2>&1 | grep -qi zksync || { echo "Error: foundry-zksync is required for ZKSync networks. See https://github.com/matter-labs/foundry-zksync" >&2; exit 1; }
         echo "--zksync"
     fi
 
@@ -246,43 +311,43 @@ resolve-verifier-params:
 [group('helpers')]
 balance:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    BALANCE=$(cast balance "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL")
-    echo "Balance of $DEPLOYMENT_ADDRESS ($NETWORK_NAME):"
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
+    echo "Balance of $DEPLOYER_ADDRESS ($NETWORK_NAME):"
     cast --to-unit "$BALANCE" ether
 
 [private]
 gas-price:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
     echo "Gas price ($NETWORK_NAME):"
     cast gas-price --rpc-url "$RPC_URL"
 
 [private]
 nonce:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    cast nonce "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL"
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    cast nonce "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL"
 
 # Cancel a stuck transaction by sending a 0-value tx at the same nonce
 [private]
 clean-nonce nonce:
     #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    cast send --private-key "$DEPLOYMENT_PRIVATE_KEY" \
+    source {{ ENV_RESOLVE_LIB }} && env_load
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    cast send --private-key "$DEPLOYER_KEY" \
         --rpc-url "$RPC_URL" \
         --value 0 \
-        --nonce {{nonce}} \
-        "$DEPLOYMENT_ADDRESS"
+        --nonce {{ nonce }} \
+        "$DEPLOYER_ADDRESS"
 
 # Cancel multiple stuck transactions: just clean-nonces "2 3 4"
 [private]
 clean-nonces *nonces:
     #!/usr/bin/env bash
-    for nonce in {{nonces}}; do
+    for nonce in {{ nonces }}; do
         just clean-nonce "$nonce"
     done
 
@@ -291,13 +356,13 @@ clean-nonces *nonces:
 refund:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ENV_RESOLVE_LIB}} && env_load
+    source {{ ENV_RESOLVE_LIB }} && env_load
     if [ -z "${REFUND_ADDRESS:-}" ] || [[ "$REFUND_ADDRESS" =~ ^0x0{39}[0-9a-fA-F]$ ]]; then
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1
     fi
-    DEPLOYMENT_ADDRESS=$(cast wallet address "$DEPLOYMENT_PRIVATE_KEY")
-    BALANCE=$(cast balance "$DEPLOYMENT_ADDRESS" --rpc-url "$RPC_URL")
+    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
+    BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
     GAS_PRICE=$(cast gas-price --rpc-url "$RPC_URL")
     SPENDABLE=$(echo "$BALANCE - $GAS_PRICE * 50000" | bc)
     if [ "$(echo "$SPENDABLE > 0" | bc)" = "0" ]; then
@@ -307,7 +372,7 @@ refund:
     echo "Refunding $SPENDABLE wei → $REFUND_ADDRESS"
     read -rp "Continue? (y/N) " CONFIRM
     [ "$CONFIRM" = "y" ] || { echo "Aborting"; exit 1; }
-    cast send --private-key "$DEPLOYMENT_PRIVATE_KEY" \
+    cast send --private-key "$DEPLOYER_KEY" \
         --rpc-url "$RPC_URL" \
         --value "$SPENDABLE" \
         "$REFUND_ADDRESS"
