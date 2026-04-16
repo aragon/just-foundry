@@ -38,6 +38,10 @@ switch network override="":
         exit 1
     fi
     ln -sf "networks/{{ network }}.env" lib/just-foundry/.env
+    if [ -n "{{ override }}" ] && [ "{{ override }}" != "override" ]; then
+        echo "Error: unknown option '{{ override }}'. Did you mean: just switch {{ network }} override" >&2
+        exit 1
+    fi
     if [ "{{ override }}" = "override" ]; then
         LOCAL=".env.{{ network }}"
         if [ -f "$LOCAL" ]; then
@@ -259,7 +263,8 @@ verify verifier="" script=DEPLOY_SCRIPT:
 [private]
 resolve-forge:
     #!/usr/bin/env bash
-    source {{ ENV_RESOLVE_LIB }} && env_load
+    source {{ ENV_RESOLVE_LIB }}
+    [ -z "${CHAIN_ID:-}" ] && env_load
     if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
         command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
         echo "forge-zksync"
