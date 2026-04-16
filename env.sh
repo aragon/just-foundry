@@ -26,6 +26,7 @@ _ENV_MASK="(KEY|PRIVATE|SECRET|JWT|PASSWORD)"
 # e.g. lib/just-foundry/.env → networks/sepolia.env → "sepolia"
 _env_network_name() {
     [ -L "$_NETWORK_SYMLINK" ] || { echo "No network selected (symlink missing). Run: just switch <network>" >&2; return 1; }
+    [ -e "$_NETWORK_SYMLINK" ] || { echo "Broken symlink: target network file was removed. Run: just switch <network>" >&2; return 1; }
     local target
     target=$(readlink "$_NETWORK_SYMLINK")
     # Strip path prefix and .env suffix: "networks/sepolia.env" → "sepolia"
