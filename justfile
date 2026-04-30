@@ -97,15 +97,15 @@ install-vars:
 predeploy:
     just dry-run {{ DEPLOY_SCRIPT }}
 
-# Deploy: run tests then broadcast, logging output to logs/deploy-<network>-<timestamp>.log
+# Deploy: run tests then broadcast (logs to logs/<contract>-<network>-<timestamp>.log)
 [group('script')]
 deploy *args:
     just test
-    just run "deploy" {{ DEPLOY_SCRIPT }} {{ args }}
+    just run {{ DEPLOY_SCRIPT }} {{ args }}
 
-# Broadcast a forge script — pass logName to log output to logs/<logName>-<network>-<timestamp>.log
+# Broadcast a forge script — log name is derived from the contract name (or filename)
 [group('script-base')]
-run logName script *args:
+run script *args:
     #!/usr/bin/env bash
     set -euo pipefail
     source {{ JUST_LIB }} && env_load --verbose
@@ -113,20 +113,23 @@ run logName script *args:
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
     SCRIPT_PARAMS=$(just resolve-script-params) || exit 1
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
+    NAME=$(basename "{{ script }}")
+    if [[ "$NAME" == *:* ]]; then
+        NAME="${NAME##*:}"      # contract name after the colon
+    else
+        NAME="${NAME%.s.sol}"   # strip .s.sol or .sol extension
+        NAME="${NAME%.sol}"
+    fi
+    LOG="logs/${NAME}-$NETWORK_NAME-$(date +%y-%m-%d-%H-%M).log"
+    mkdir -p logs
     CMD=($FORGE script {{ script }} \
         --rpc-url "$RPC_URL" \
         --retries 10 --delay 10 \
         --broadcast --verify \
         $BUILD_PARAMS $SCRIPT_PARAMS $VERIFIER_PARAMS \
         -vvv {{ args }})
-    if [ -n "{{ logName }}" ]; then
-        LOG="logs/{{ logName }}-$NETWORK_NAME-$(date +%y-%m-%d-%H-%M).log"
-        mkdir -p logs
-        run_logged "$LOG" "${CMD[@]}"
-        echo "Log: $LOG"
-    else
-        "${CMD[@]}"
-    fi
+    run_logged "$LOG" "${CMD[@]}"
+    echo "Log: $LOG"
 
 # Simulate running a forge script (no broadcast)
 [group('script-base')]

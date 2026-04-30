@@ -66,7 +66,7 @@ Available recipes:
     deploy *args                            # Deploy: run tests then broadcast, with log
 
     [script-base]
-    run logName="" script *args             # Broadcast a forge script (logName enables logging)
+    run script *args                        # Broadcast a forge script (logged; name derived from contract/file)
     dry-run script                          # Simulate running a forge script (no broadcast)
 
     [test]
@@ -259,7 +259,7 @@ import 'lib/just-foundry/justfile'
 # Custom deploy: extra steps before broadcasting
 deploy *args:
     just my-pre-deploy-hook
-    just run deploy script/Deploy.s.sol:Deploy {{ args }}
+    just run script/Deploy.s.sol:Deploy {{ args }}
     just my-post-deploy-hook
 ```
 
@@ -284,19 +284,19 @@ predeploy:
 
 Define them in your root `justfile` after the import.
 
-**Broadcast with a log** — use `just run <logName> <script>` as the building block:
+**Broadcast a script** — use `just run <script>` as the building block. The log filename is derived automatically: contract name when the script has a `:Contract` suffix, otherwise the file's basename (without `.s.sol`):
 
 ```just
 default: help
 import 'lib/just-foundry/justfile'
 
-# Run the upgrade script and log output to logs/upgrade-<network>-<timestamp>.log
+# Logs to logs/Upgrade-<network>-<timestamp>.log
 upgrade:
-    just run "upgrade" script/Upgrade.s.sol:Upgrade
+    just run script/Upgrade.s.sol:Upgrade
 
-# Seed test data (no logs)
+# Logs to logs/Seed-<network>-<timestamp>.log
 seed:
-    just run "" script/Seed.s.sol:Seed
+    just run script/Seed.s.sol
 ```
 
 **Dry-run** — use `just dry-run <script>`:
@@ -314,7 +314,7 @@ deploy-and-verify *args:
     set -euo pipefail
     source {{ JUST_LIB }} && env_load
     echo "Deploying to $NETWORK_NAME..."
-    just run deploy script/Deploy.s.sol:Deploy {{ args }}
+    just run script/Deploy.s.sol:Deploy {{ args }}
     just verify
 ```
 
