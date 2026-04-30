@@ -85,7 +85,7 @@ Available recipes:
     anvil                                   # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
 
     [verification]
-    verify verifier="" script=DEPLOY_SCRIPT # Verify all contracts from the latest broadcast
+    verify type="" script=""                # Verify all contracts from the latest broadcast (defaults to DEPLOY_SCRIPT)
 ```
 
 Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `clean-nonces`, `refund`. See [Debug helpers](#debug-helpers).
@@ -244,13 +244,29 @@ import 'lib/just-foundry/justfile'
 DEPLOY_SCRIPT := "script/MyDeploy.s.sol:MyScript"
 ```
 
-### Shadow recipes that don't apply
+### Override or shadow recipes
 
-Some repos have no canonical single-deploy script — they only do per-component deploys (e.g. `just deploy-foo`, `just deploy-bar`). The inherited `deploy` / `predeploy` recipes would just fail with "`script/Deploy.s.sol` not found". Shadow them with `set allow-duplicate-recipes` + `[private]` so they're hidden from `just --list` and direct invocations get a redirect:
+Any inherited recipe can be replaced by redefining it with the same name in your project's justfile. just-foundry sets `allow-duplicate-recipes`, so your definition silently wins over the imported one.
+
+Common cases:
+
+**Replace** an inherited recipe with your own logic: same name, different body:
 
 ```just
 default: help
-set allow-duplicate-recipes
+import 'lib/just-foundry/justfile'
+
+# Custom deploy: extra steps before broadcasting
+deploy *args:
+    just my-pre-deploy-hook
+    just run deploy script/Deploy.s.sol:Deploy {{ args }}
+    just my-post-deploy-hook
+```
+
+**Shadow recipes that don't apply** — useful when the project has no canonical single-deploy script. Mark the shadow `[private]` so it's hidden from `just --list`:
+
+```just
+default: help
 import 'lib/just-foundry/justfile'
 
 [private]
@@ -263,8 +279,6 @@ predeploy:
     @echo "Use 'just predeploy-<component>'." >&2
     @exit 1
 ```
-
-The same trick works for any inherited recipe you want to hide or replace. `set allow-duplicate-recipes` makes the later definition (yours) win.
 
 ### Add your own recipes
 

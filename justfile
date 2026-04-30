@@ -3,6 +3,7 @@
 set shell := ["bash", "-c"]
 set dotenv-load := false
 set allow-duplicate-variables
+set allow-duplicate-recipes
 
 JUST_LIB := "lib/just-foundry/lib.sh"
 DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
@@ -247,16 +248,17 @@ anvil:
     source {{ JUST_LIB }} && env_load --verbose
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
-# Verify all contracts from the latest broadcast (verifier: etherscan|blockscout|sourcify)
+# Verify all contracts from the latest broadcast (type: etherscan|blockscout|sourcify)
 [group('verification')]
-verify verifier="" script=DEPLOY_SCRIPT:
+verify type="" script="":
     #!/usr/bin/env bash
     set -euo pipefail
     source {{ JUST_LIB }} && env_load --verbose
-    [ -n "{{ verifier }}" ] && export VERIFIER="{{ verifier }}"
+    [ -n "{{ type }}" ] && export VERIFIER="{{ type }}"
+    SCRIPT="{{ if script == "" { DEPLOY_SCRIPT } else { script } }}"
     [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
-    SCRIPT_FILE=$(basename "{{ script }}" | cut -d: -f1)
+    SCRIPT_FILE=$(basename "$SCRIPT" | cut -d: -f1)
     bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
 
 # Forge binary: forge for standard EVM, forge-zksync for ZkSync networks (chain 324/300)
