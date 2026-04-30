@@ -244,6 +244,28 @@ import 'lib/just-foundry/justfile'
 DEPLOY_SCRIPT := "script/MyDeploy.s.sol:MyScript"
 ```
 
+### Shadow recipes that don't apply
+
+Some repos have no canonical single-deploy script — they only do per-component deploys (e.g. `just deploy-foo`, `just deploy-bar`). The inherited `deploy` / `predeploy` recipes would just fail with "`script/Deploy.s.sol` not found". Shadow them with `set allow-duplicate-recipes` + `[private]` so they're hidden from `just --list` and direct invocations get a redirect:
+
+```just
+default: help
+set allow-duplicate-recipes
+import 'lib/just-foundry/justfile'
+
+[private]
+deploy *args:
+    @echo "Use 'just deploy-<component>' (e.g. 'just deploy-foo')." >&2
+    @exit 1
+
+[private]
+predeploy:
+    @echo "Use 'just predeploy-<component>'." >&2
+    @exit 1
+```
+
+The same trick works for any inherited recipe you want to hide or replace. `set allow-duplicate-recipes` makes the later definition (yours) win.
+
 ### Add your own recipes
 
 Define them in your root `justfile` after the import.
