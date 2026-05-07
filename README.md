@@ -62,10 +62,12 @@ Available recipes:
     setup                                   # Install Foundry
 
     [script]
-    predeploy                               # Simulate the deploy script
-    deploy                                  # Deploy: run tests, broadcast, tee to log
-    run script *args                        # Run a forge script (broadcast)
-    simulate script                         # Simulate a forge script (no broadcast)
+    predeploy                               # Dry-run the deploy script (no broadcast)
+    deploy *args                            # Deploy: run tests then broadcast, with log
+
+    [script-base]
+    run script *args                        # Broadcast a forge script (logged; name derived from contract/file)
+    dry-run script                          # Simulate running a forge script (no broadcast)
 
     [test]
     test *args                              # Run all unit tests
@@ -83,7 +85,7 @@ Available recipes:
     anvil                                   # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
 
     [verification]
-    verify verifier="" script=DEPLOY_SCRIPT # Verify all contracts from the latest broadcast
+    verify type="" script=""                # Verify all contracts from the latest broadcast (defaults to DEPLOY_SCRIPT)
 ```
 
 Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `clean-nonces`, `refund`. See [Debug helpers](#debug-helpers).
@@ -242,23 +244,92 @@ import 'lib/just-foundry/justfile'
 DEPLOY_SCRIPT := "script/MyDeploy.s.sol:MyScript"
 ```
 
-### Add your own recipes
+### Override or shadow recipes
 
-Define them in your root `justfile` after the import:
+Any inherited recipe can be replaced by redefining it with the same name in your project's justfile. just-foundry sets `allow-duplicate-recipes`, so your definition silently wins over the imported one.
+
+Common cases:
+
+**Replace** an inherited recipe with your own logic: same name, different body:
 
 ```just
 default: help
 import 'lib/just-foundry/justfile'
 
-# Seed the protocol with test data
-seed:
-    #!/usr/bin/env bash
-    source {{ENV_RESOLVE_LIB}} && env_load
-    just run script/Seed.s.sol:Seed
-    just run script/Seed.s.sol:Seed --slow --legacy
+# Custom deploy: extra steps before broadcasting
+deploy *args:
+    just my-pre-deploy-hook
+    just run script/Deploy.s.sol:Deploy {{ args }}
+    just my-post-deploy-hook
 ```
 
-`ENV_RESOLVE_LIB` loads the environment helpers. The main entry points are `env_load` (source config + secrets) and `env_network_name` (lightweight — just the active network name).
+**Shadow recipes that don't apply** — useful when the project has no canonical single-deploy script. Mark the shadow `[private]` so it's hidden from `just --list`:
+
+```just
+default: help
+import 'lib/just-foundry/justfile'
+
+[private]
+deploy *args:
+    @echo "Use 'just deploy-<component>' (e.g. 'just deploy-foo')." >&2
+    @exit 1
+
+[private]
+predeploy:
+    @echo "Use 'just predeploy-<component>'." >&2
+    @exit 1
+```
+
+### Add your own recipes
+
+Define them in your root `justfile` after the import.
+
+**Broadcast a script** — use `just run <script>` as the building block. The log filename is derived automatically: contract name when the script has a `:Contract` suffix, otherwise the file's basename (without `.s.sol`):
+
+```just
+default: help
+import 'lib/just-foundry/justfile'
+
+# Logs to logs/Upgrade-<network>-<timestamp>.log
+upgrade:
+    just run script/Upgrade.s.sol:Upgrade
+
+# Logs to logs/Seed-<network>-<timestamp>.log
+seed:
+    just run script/Seed.s.sol
+```
+
+**Dry-run** — use `just dry-run <script>`:
+
+```just
+check:
+    just dry-run script/Check.s.sol:Check
+```
+
+**Custom logic before broadcasting** — source `{{ JUST_LIB }}` directly:
+
+```just
+deploy-and-verify *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source {{ JUST_LIB }} && env_load
+    echo "Deploying to $NETWORK_NAME..."
+    just run script/Deploy.s.sol:Deploy {{ args }}
+    just verify
+```
+
+**Custom logged command** — call `run_logged` directly for non-forge executables:
+
+```just
+snapshot:
+    #!/usr/bin/env bash
+    source {{ JUST_LIB }} && env_load
+    LOG="logs/snapshot-$NETWORK_NAME-$(date +%y-%m-%d-%H-%M).log"
+    run_logged "$LOG" my-command --network "$NETWORK_NAME"
+    echo "Log: $LOG"
+```
+
+`JUST_LIB` exposes: `env_load [--verbose]`, `env_network_name`, `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
 
 ---
 

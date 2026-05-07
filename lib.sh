@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# env.sh — composable env helpers for just-foundry
-# Usage: source lib/just-foundry/env.sh
+# lib.sh — shell utilities for just-foundry
+# Usage: source lib/just-foundry/lib.sh
 #
 # How network resolution works:
 #   1. The symlink lib/just-foundry/.env → networks/<name>.env is the single
@@ -15,6 +15,8 @@
 #   env_network_name       print the active network name (no sourcing)
 #   env_load               source network config + secrets into the current shell
 #   env_show               print the resolved environment with source attribution
+#   run_logged log cmd…    run a command with a PTY, log stripped output to file
+#   strip_ansi file        strip ANSI escape codes from a file in-place
 
 _NETWORK_SYMLINK="lib/just-foundry/.env"
 _ENV_SKIP="^(NETWORK_NAME|CHAIN_ID|VERIFIER)$"
@@ -48,7 +50,7 @@ _env_network_file() {
     fi
 }
 
-# --- Public API ---
+# --- Public env API ---
 
 # Print the active network name (lightweight — no file sourcing).
 env_network_name() {
@@ -104,7 +106,64 @@ env_show() {
     fi
 }
 
-# --- Core emitter (single source of resolved values) ---
+# --- Run utilities ---
+
+# Strip ANSI escape codes, carriage-return overwrites, and progress-bar lines from a file in-place.
+# Handles both GNU sed (Linux) and BSD sed (macOS).
+strip_ansi() {
+    local file="$1"
+    # 1. s/\r$//        — normalize \r\n line endings written by script(1)
+    # 2. /\r/d          — drop lines with \r mid-line (forge progress overwrite lines)
+    # 3. /-----/d       — drop lines containing consecutive dashes (residual progress bars)
+    # 4. /#####/d       — drop lines containing consecutive hashes (completed progress bars)
+    # 5. s/\x1b\[…//g   — strip remaining ANSI escape codes
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        sed -i '' $'s/\r$//; /\r/d; /-----/d; /#####/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
+    else
+        sed -i $'s/\r$//; /\r/d; /-----/d; /#####/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
+    fi
+}
+
+# Run a command with a PTY so it renders colors and progress indicators
+# normally on the console, while also recording stripped output to a log file.
+#
+# Usage: run_logged <logfile> <cmd> [args…]
+#
+# On Linux, uses script(1) with -e for exit code propagation.
+# On macOS, exit code is captured via a temp file (BSD script lacks -e).
+run_logged() {
+    local log="$1"; shift
+    mkdir -p "$(dirname "$log")"
+    local _rc=0
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        local _rc_file; _rc_file=$(mktemp)
+        script -q "$log" bash -c "$(printf '%q ' "$@"); echo \$? > $(printf '%q' "$_rc_file")"
+        _rc=$(cat "$_rc_file" 2>/dev/null); _rc=${_rc:-130}
+        rm -f "$_rc_file"
+    else
+        script -q -e -c "$(printf '%q ' "$@")" "$log" || _rc=$?
+    fi
+    strip_ansi "$log"
+    local _tmp; _tmp=$(mktemp)
+    _filter_forge < "$log" > "$_tmp" && mv "$_tmp" "$log"
+    return "$_rc"
+}
+
+# Pipe filter: removes forge progress/spinner noise from stdin.
+# Matches only precise patterns to avoid over-filtering:
+#   - pending tx lines:   [Pending] 0x<64 hex chars>
+#   - timer+progress:     [HH:MM:SS] [---…---] N/M txes|receipts (Xs)
+#   - sequence header:    Sequence #N on <network>
+#   - script(1) header:   Script started/done on …
+_filter_forge() {
+    grep -Ev \
+        -e '\[Pending\] 0x[0-9a-f]{64}[[:space:]]*$' \
+        -e '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\].*\[[-#]+\].*(txes|receipts)' \
+        -e 'Sequence #[0-9]+ on ' \
+        -e '^Script (started|done) on '
+}
+
+# --- Core env emitter ---
 
 # Emit resolved export statements to stdout.
 # Pipes network file + root .env into vars resolve (store takes priority over files).
@@ -125,7 +184,6 @@ _env_exports() {
 
 # --- Private helpers ---
 
-# Eval _env_exports into the current shell.
 _env_apply_secrets() {
     local profile
     profile=$(_env_network_name) || return 1
