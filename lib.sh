@@ -108,17 +108,19 @@ env_show() {
 
 # --- Run utilities ---
 
-# Strip ANSI escape codes and carriage-return overwrites from a file in-place.
+# Strip ANSI escape codes, carriage-return overwrites, and progress-bar lines from a file in-place.
 # Handles both GNU sed (Linux) and BSD sed (macOS).
 strip_ansi() {
     local file="$1"
-    # 1. s/\r$// — normalize \r\n line endings written by script(1)
-    # 2. /\r/d   — drop lines with \r mid-line (forge progress overwrite lines)
-    # 3. strip remaining ANSI escape codes
+    # 1. s/\r$//        — normalize \r\n line endings written by script(1)
+    # 2. /\r/d          — drop lines with \r mid-line (forge progress overwrite lines)
+    # 3. /-----/d       — drop lines containing consecutive dashes (residual progress bars)
+    # 4. /#####/d       — drop lines containing consecutive hashes (completed progress bars)
+    # 5. s/\x1b\[…//g   — strip remaining ANSI escape codes
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        sed -i '' $'s/\r$//; /\r/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
+        sed -i '' $'s/\r$//; /\r/d; /-----/d; /#####/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
     else
-        sed -i $'s/\r$//; /\r/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
+        sed -i $'s/\r$//; /\r/d; /-----/d; /#####/d; s/\x1b\[[0-9;]*[A-Za-z]//g' "$file"
     fi
 }
 
@@ -136,7 +138,7 @@ run_logged() {
     if [[ "$(uname -s)" == "Darwin" ]]; then
         local _rc_file; _rc_file=$(mktemp)
         script -q "$log" bash -c "$(printf '%q ' "$@"); echo \$? > $(printf '%q' "$_rc_file")"
-        _rc=$(cat "$_rc_file" 2>/dev/null || echo 1)
+        _rc=$(cat "$_rc_file" 2>/dev/null); _rc=${_rc:-130}
         rm -f "$_rc_file"
     else
         script -q -e -c "$(printf '%q ' "$@")" "$log" || _rc=$?
