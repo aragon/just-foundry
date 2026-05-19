@@ -290,11 +290,17 @@ resolve-build-params:
 [private]
 resolve-script-params:
     #!/usr/bin/env bash
-    if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
-        echo "--slow"
-    elif [ "${CHAIN_ID:-}" = "88888" ]; then
-        echo "--priority-gas-price 1000000000 --gas-price 5200000000000"
-    fi
+    case "${CHAIN_ID:-}" in
+        324|300)
+            echo "--slow"
+            ;;
+        43111)
+            echo "--gas-price 0.1gwei --priority-gas-price 0.01gwei"
+            ;;
+        88888)
+            echo "--gas-price 5200gwei --priority-gas-price 1gwei"
+            ;;
+    esac
 
 # Verifier flags (reads VERIFIER, BLOCKSCOUT_HOST_NAME, ETHERSCAN_API_KEY from env)
 [private]
