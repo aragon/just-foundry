@@ -270,31 +270,41 @@ resolve-forge:
     #!/usr/bin/env bash
     source {{ JUST_LIB }}
     [ -z "${CHAIN_ID:-}" ] && env_load
-    if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
-        command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
-        echo "forge-zksync"
-    else
-        echo "forge"
-    fi
+    case "${CHAIN_ID:-}" in
+        324|300)
+            command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
+            echo "forge-zksync"
+            ;;
+        *)
+            echo "forge"
+    esac
 
 # Compiler flags (--zksync for ZkSync networks)
 [private]
 resolve-build-params:
     #!/usr/bin/env bash
     source {{ JUST_LIB }} && env_load
-    if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
-        echo "--zksync"
-    fi
+    case "${CHAIN_ID:-}" in
+        324|300)
+            echo "--zksync"
+            ;;
+    esac
 
 # Script execution flags (chain-specific gas/speed params)
 [private]
 resolve-script-params:
     #!/usr/bin/env bash
-    if [ "${CHAIN_ID:-}" = "324" ] || [ "${CHAIN_ID:-}" = "300" ]; then
-        echo "--slow"
-    elif [ "${CHAIN_ID:-}" = "88888" ]; then
-        echo "--priority-gas-price 1000000000 --gas-price 5200000000000"
-    fi
+    case "${CHAIN_ID:-}" in
+        324|300)
+            echo "--slow"
+            ;;
+        43111)
+            echo "--legacy --gas-price 100000000"
+            ;;
+        88888)
+            echo "--gas-price 5200000000000 --priority-gas-price 1000000000"
+            ;;
+    esac
 
 # Verifier flags (reads VERIFIER, BLOCKSCOUT_HOST_NAME, ETHERSCAN_API_KEY from env)
 [private]
