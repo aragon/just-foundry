@@ -140,10 +140,11 @@ dry-run script:
     source {{ JUST_LIB }} && env_load --verbose
     FORGE=$(just resolve-forge) || exit 1
     BUILD_PARAMS=$(just resolve-build-params) || exit 1
+    SCRIPT_PARAMS=$(just resolve-script-params) || exit 1
     export SIMULATION=true
     $FORGE script {{ script }} \
         --rpc-url "$RPC_URL" \
-        $BUILD_PARAMS \
+        $BUILD_PARAMS $SCRIPT_PARAMS \
         -vvv
 
 # Run all unit tests
@@ -303,7 +304,8 @@ resolve-script-params:
             echo "--legacy --gas-price 100000000"
             ;;
         88888)
-            echo "--gas-price 5200000000000 --priority-gas-price 1000000000"
+            echo "--legacy --gas-price 5200000000000"
+            # echo "--gas-price 5200000000000 --priority-gas-price 1000000000"
             ;;
     esac
 
