@@ -266,6 +266,118 @@ verify type="" script="":
     SCRIPT_FILE=$(basename "$SCRIPT" | cut -d: -f1)
     bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
 
+# Prep contracts for manual explorer verification. Writes flat/<Name>.flat.sol
+# (single-file source); when the active network has a matching CREATE in
+# broadcast/, also writes flat/<Name>.args.txt with the exact ABI-encoded
+# constructor arguments used at deployment (sliced from the tx input — bit-
+# perfect, no re-encoding). Use when a verifier rejects standard-JSON (e.g.
+# zkSync Era Explorer refuses payloads carrying `settings.remappings`).
+# Requires `forge build` first (reads out/**/*.json to enumerate contracts and
+# to know local bytecode length for the args slice).
+# Usage:
+#   just flatten                    # every concrete contract under src/
+#   just flatten src/Foo.sol:Foo    # just this one
+[group('verification')]
+flatten target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{ target }}" ]; then
+        just _flatten-one "{{ target }}"
+        exit 0
+    fi
+    count=0
+    while IFS= read -r src; do
+        base=$(basename "$src")
+        [ -d "out/$base" ] || continue
+        for out_json in out/"$base"/*.json; do
+            [ -e "$out_json" ] || continue
+            bc_len=$(jq -r '.bytecode.object // "" | length' "$out_json" 2>/dev/null || echo 0)
+            [ "${bc_len:-0}" -gt 2 ] || continue    # skip interfaces / abstract contracts
+            NAME=$(basename "$out_json" .json)
+            just _flatten-one "${src}:${NAME}"
+            count=$((count + 1))
+        done
+    done < <(find src -type f -name '*.sol')
+    if [ "$count" -eq 0 ]; then
+        echo "No concrete contracts found under src/. Did you 'forge build' first?" >&2
+        exit 1
+    fi
+
+# Flatten a single <src.sol:Name> and, if the active network has a matching
+# CREATE in broadcast/, emit flat/<Name>.args.txt with the exact ABI-encoded
+# constructor args (sliced from the tx input by the local build's bytecode
+# length — bit-perfect with what was deployed, no re-encoding drift).
+[private]
+_flatten-one target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TARGET="{{ target }}"
+    if [[ "$TARGET" != *:* ]]; then
+        echo "Expected <path/to/Contract.sol:ContractName>, got '$TARGET'" >&2
+        exit 1
+    fi
+    SRC="${TARGET%%:*}"
+    NAME="${TARGET##*:}"
+    mkdir -p flat
+    # Ensure the containing repo ignores flat/ so we don't accidentally commit
+    # the outputs. `grep -q` also returns non-zero when .gitignore is missing,
+    # so this creates the file on fresh clones too.
+    grep -qE '^flat/?$' .gitignore 2>/dev/null || echo 'flat/' >> .gitignore
+    FLAT="flat/${NAME}.flat.sol"
+    forge flatten "$SRC" > "$FLAT"
+    echo "Flattened → $FLAT"
+
+    # Args lookup is best-effort: silently skip when no network is active or
+    # the contract wasn't deployed on it. Flattening is the primary deliverable.
+    source {{ JUST_LIB }}
+    env_load 2>/dev/null || true
+    [ -z "${CHAIN_ID:-}" ] && exit 0
+    OUT_JSON="out/$(basename "$SRC")/${NAME}.json"
+    [ -f "$OUT_JSON" ] || exit 0
+
+    # zkSync broadcasts record every CREATE as a CALL through the 0x…8006
+    # system deployer and strip `contractName` from both the top-level tx and
+    # its `additionalContracts[]`. Without a name→address map, we can't
+    # auto-attribute args here — extract them from
+    # broadcast/*/${CHAIN_ID}/run-latest.json's `additionalContracts[].initCode`
+    # (which is already the ABI-encoded args on zkSync) and drop them into
+    # flat/<Name>.args.txt yourself.
+    case "${CHAIN_ID:-}" in
+        300|324)
+            echo "  (zkSync: auto-detect unavailable; write ${NAME}.args.txt manually if needed)" >&2
+            exit 0
+            ;;
+    esac
+
+    input=""
+    src_run=""
+    for broadcast in broadcast/*/"${CHAIN_ID}"/run-latest.json; do
+        [ -e "$broadcast" ] || continue
+        found=$(jq -r --arg n "$NAME" \
+            '(.transactions // []) | map(select(.transactionType == "CREATE" and .contractName == $n)) | (.[-1].transaction.input // empty)' \
+            "$broadcast")
+        if [ -n "$found" ] && [ "$found" != "null" ]; then
+            input="$found"
+            src_run="$broadcast"
+            break
+        fi
+    done
+    [ -n "$input" ] || exit 0
+
+    # `bytecode.object` and `transaction.input` share the same length prefix
+    # (creation code + fixed-length metadata hash); the tail is the encoded
+    # args. Recompiles produce same-length bytecode, so a stale build still
+    # slices correctly — the args reveal themselves as the length difference.
+    bytecode=$(jq -r '.bytecode.object' "$OUT_JSON")
+    bc_hex="${bytecode#0x}"
+    in_hex="${input#0x}"
+    if [ "${#in_hex}" -le "${#bc_hex}" ]; then
+        exit 0    # constructor took no args
+    fi
+    ARGS_FILE="flat/${NAME}.args.txt"
+    printf '0x%s\n' "${in_hex:${#bc_hex}}" > "$ARGS_FILE"
+    echo "Args      → $ARGS_FILE (from ${src_run})"
+
 # Forge binary: forge for standard EVM, forge-zksync for ZkSync networks (chain 324/300)
 [private]
 resolve-forge:

@@ -86,6 +86,7 @@ Available recipes:
 
     [verification]
     verify type="" script=""                # Verify all contracts from the latest broadcast (defaults to DEPLOY_SCRIPT)
+    flatten target=""                       # Flatten every concrete src/ contract (or one) + auto-detect constructor args from broadcast/
 ```
 
 Additional helpers (not in `just help`): `gas-price`, `nonce`, `clean-nonce`, `clean-nonces`, `refund`. See [Debug helpers](#debug-helpers).
