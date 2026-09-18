@@ -215,6 +215,28 @@ vars set mainnet/DEPLOYER_KEY     # prod wallet
 vars set sepolia/RPC_URL          # private RPC endpoint
 ```
 
+### Flatten for manual verification
+
+`just flatten` prepares your source for pasting into an explorer's "verify contract" UI. Use it when an API-based verifier rejects the standard-JSON input (a common example: zkSync Era Explorer refuses payloads carrying `settings.remappings`, which any project with import aliases inevitably has).
+
+**What it produces**, under `flat/` in the calling project (auto-added to `.gitignore` on first run):
+
+- `flat/<Name>.flat.sol` — a single-file, self-contained Solidity source (`forge flatten` output — pragmas deduped, licenses reconciled).
+- `flat/<Name>.args.txt` — the ABI-encoded constructor arguments used at deployment, ready to paste into the explorer's "constructor arguments (ABI-encoded)" field. Only written when the active network has a matching deployment in `broadcast/`.
+
+**Modes:**
+
+```bash
+just flatten                       # every concrete contract under src/
+just flatten src/Foo.sol:Foo       # just this one
+```
+
+The all-contracts mode walks `src/**/*.sol`, cross-references each source file against `out/<basename>/*.json` to enumerate the contracts inside, and skips anything with empty bytecode (interfaces, pure-abstract contracts). Requires `forge build` first.
+
+Both paths quietly skip when nothing matches (contract wasn't deployed on the active network, or was deployed by some other broker not visible to your broadcast). Flattening is the primary deliverable; args are a bonus when the deployment record is there.
+
+**When to reach for it.** Whenever Etherscan, Blockscout or similar block verification, you can use the flattened artifacts to deploy via their web UI's.
+
 ### `just env`
 
 Shows the fully resolved environment — every variable once, with its effective value and source:
