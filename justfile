@@ -266,6 +266,92 @@ verify type="" script="":
     SCRIPT_FILE=$(basename "$SCRIPT" | cut -d: -f1)
     bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
 
+# Flatten every concrete src/ contract (or one), plus ABI-encoded ctor args from broadcast/. See README > "Flatten for manual verification".
+[group('verification')]
+flatten target="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "{{ target }}" ]; then
+        just _flatten-one "{{ target }}"
+        exit 0
+    fi
+    count=0
+    while IFS= read -r src; do
+        base=$(basename "$src")
+        [ -d "out/$base" ] || continue
+        for out_json in out/"$base"/*.json; do
+            [ -e "$out_json" ] || continue
+            bc_len=$(jq -r '.bytecode.object // "" | length' "$out_json" 2>/dev/null || echo 0)
+            [ "${bc_len:-0}" -gt 2 ] || continue
+            NAME=$(basename "$out_json" .json)
+            just _flatten-one "${src}:${NAME}"
+            count=$((count + 1))
+        done
+    done < <(find src -type f -name '*.sol')
+    [ "$count" -gt 0 ] || { echo "No concrete contracts under src/. Did you 'forge build' first?" >&2; exit 1; }
+
+# Flatten one <src.sol:Name>; write flat/<Name>.args.txt when the active network has a matching deployment.
+[private]
+_flatten-one target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TARGET="{{ target }}"
+    [[ "$TARGET" == *:* ]] || { echo "Expected <path/to/Contract.sol:ContractName>, got '$TARGET'" >&2; exit 1; }
+    SRC="${TARGET%%:*}"; NAME="${TARGET##*:}"
+    mkdir -p flat
+    grep -qE '^flat/?$' .gitignore 2>/dev/null || echo 'flat/' >> .gitignore
+    forge flatten "$SRC" > "flat/${NAME}.flat.sol"
+    echo "Flattened → flat/${NAME}.flat.sol"
+
+    source {{ JUST_LIB }} && env_load 2>/dev/null || true
+    [ -z "${CHAIN_ID:-}" ] && exit 0
+
+    args=""
+    case "${CHAIN_ID:-}" in
+        300|324)
+            # zkSync: match zkout .hash against the bytecodeHash field of CONTRACT_DEPLOYER.create calldata.
+            ZKOUT_JSON="zkout/$(basename "$SRC")/${NAME}.json"
+            [ -f "$ZKOUT_JSON" ] || exit 0
+            target_hash=$(jq -r '.hash // empty' "$ZKOUT_JSON" | tr 'A-F' 'a-f')
+            [ -n "$target_hash" ] || exit 0
+            for broadcast in broadcast/*/"${CHAIN_ID}"/run-latest.json; do
+                [ -e "$broadcast" ] || continue
+                while IFS= read -r input; do
+                    [ -n "$input" ] && [ "$input" != "null" ] || continue
+                    [ "${input:0:10}" = "0x9c4d535b" ] || continue    # create(bytes32,bytes32,bytes)
+                    body="${input:10}"
+                    tx_hash=$(echo "${body:64:64}" | tr 'A-F' 'a-f')
+                    [ "$tx_hash" = "$target_hash" ] || continue
+                    length_hex="${body:192:64}"
+                    length_dec=$((16#$length_hex))
+                    [ "$length_dec" -gt 0 ] && args="0x${body:256:$((length_dec * 2))}"
+                    break 2
+                done < <(jq -r '.transactions[]?.transaction.input // empty' "$broadcast")
+            done
+            ;;
+        *)
+            # EVM: slice broadcast tx.input by local bytecode length; the tail is the ABI-encoded args.
+            OUT_JSON="out/$(basename "$SRC")/${NAME}.json"
+            [ -f "$OUT_JSON" ] || exit 0
+            input=""
+            for broadcast in broadcast/*/"${CHAIN_ID}"/run-latest.json; do
+                [ -e "$broadcast" ] || continue
+                found=$(jq -r --arg n "$NAME" \
+                    '(.transactions // []) | map(select(.transactionType == "CREATE" and .contractName == $n)) | (.[-1].transaction.input // empty)' \
+                    "$broadcast")
+                if [ -n "$found" ] && [ "$found" != "null" ]; then input="$found"; break; fi
+            done
+            [ -n "$input" ] || exit 0
+            bytecode=$(jq -r '.bytecode.object' "$OUT_JSON")
+            bc_hex="${bytecode#0x}"; in_hex="${input#0x}"
+            [ "${#in_hex}" -gt "${#bc_hex}" ] && args="0x${in_hex:${#bc_hex}}"
+            ;;
+    esac
+
+    [ -n "$args" ] || exit 0
+    echo "$args" > "flat/${NAME}.args.txt"
+    echo "Args      → flat/${NAME}.args.txt"
+
 # Forge binary: forge for standard EVM, forge-zksync for ZkSync networks (chain 324/300)
 [private]
 resolve-forge:
