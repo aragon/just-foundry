@@ -245,6 +245,12 @@ check-upgrade from to:
     fi
     echo "Storage layout check passed: {{ from }} → {{ to }} is safe to upgrade"
 
+# Sync networks/*.env from artifacts-hub JSONs (--dry-run to preview, --force to overwrite conflicts)
+[group('maintenance')]
+sync-addresses *args:
+    #!/usr/bin/env bash
+    bash "{{ source_directory() }}/scripts/sync-addresses.sh" {{ args }}
+
 # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
 [group('develop')]
 anvil:
