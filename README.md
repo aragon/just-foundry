@@ -333,6 +333,31 @@ snapshot:
 
 ---
 
+## Maintaining `networks/*.env`
+
+The addresses in `networks/<network>.env` are derived from the canonical
+[artifacts-hub](https://github.com/aragon/artifacts-hub) address book. Keep
+them in sync with:
+
+```sh
+just sync-addresses [--dry-run] [--force] [hub-path]
+```
+
+- **hub-path** — path to a local artifacts-hub checkout. Defaults to
+  `../artifacts-hub` (sibling of `just-foundry`).
+- **`--dry-run`** — show a per-network diff, write nothing.
+- Safe additions (new `*_PLUGIN_REPO_ADDRESS` keys found in the JSON) apply
+  automatically. They're inserted grouped with existing plugin-repo lines.
+- Existing values are **never** overwritten with a different address unless
+  `--force` is passed. A conflict prints a clear `env vs json` diff, the whole
+  network is left untouched, and the script exits non-zero — an artifacts-hub
+  drift check for CI.
+- Addresses are written EIP-55 checksummed. `CHAIN_ID` mismatch between env and
+  JSON is a hard error.
+
+Run this whenever artifacts-hub publishes a new plugin build or fixes an
+address; commit the resulting `networks/*.env` diff.
+
 ## Supported networks
 
 | Network | Chain ID |
