@@ -35,7 +35,7 @@ switch network override="":
     TEMPLATE="lib/just-foundry/networks/{{ network }}.env"
     if [ ! -f "$TEMPLATE" ]; then
         echo "Error: network '{{ network }}' not found."
-        echo "Available networks: $(ls lib/just-foundry/networks/*.env 2>/dev/null | xargs -I{} basename {} .env | tr '\n' ' ')"
+        just networks
         exit 1
     fi
     ln -sf "networks/{{ network }}.env" lib/just-foundry/.env
@@ -53,6 +53,21 @@ switch network override="":
         fi
     fi
     echo "Switched to network: {{ network }}"
+
+# List the available networks and their chain IDs (* = active)
+[group('setup')]
+networks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DIR="{{ source_directory() }}/networks"
+    ACTIVE=$(readlink "{{ source_directory() }}/.env" 2>/dev/null | xargs -r basename | sed 's/\.env$//' || true)
+    echo "Available networks:"
+    for f in "$DIR"/*.env; do
+        NAME=$(basename "$f" .env)
+        CHAIN_ID=$(sed -n 's/^CHAIN_ID="\{0,1\}\([0-9]*\)"\{0,1\}$/\1/p' "$f")
+        MARK=" "; [ "$NAME" = "$ACTIVE" ] && MARK="*"
+        printf "  %s %-18s %s\n" "$MARK" "$NAME" "$CHAIN_ID"
+    done
 
 # Install Foundry
 [group('setup')]
