@@ -10,24 +10,39 @@ A drop-in task runner and environment manager for Foundry projects. Add it as a 
 git submodule add https://github.com/aragon/just-foundry.git lib/just-foundry
 ```
 
-Create a two-line `justfile` at your project root:
+Create a `justfile` at your project root:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+# Optional import: on a fresh clone lib/ is still empty, and `just init` must work before it is fetched
+import? 'lib/just-foundry/justfile'
+
+# A recipe body (not `default: help`): `help` only exists once just-foundry is fetched
+default:
+    @just help
 
 # Optional: override if you use a different deployment script
 # DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
+
+# Fetch the submodules, scaffold .env and select the network
+[group('setup')]
+init network="mainnet":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git submodule update --init --recursive
+    if [ ! -f .env ] && [ -f .env.example ]; then
+        cp .env.example .env
+        echo "Created .env from .env.example, edit it with your settings."
+    fi
+    just switch {{ network }}
 ```
 
-Initialize submodules and set up your target network:
+Then, on any fresh clone:
 
 ```sh
-git submodule update --init --recursive
 just init sepolia
 ```
 
-> **Fresh clones:** `just init` imports its recipes from `lib/just-foundry/justfile`, so the submodule needs exist first.
+> **Why the project defines `init`:** just-foundry lives in a submodule, so none of its recipes exist on a fresh clone. With a plain `import`, `just` refuses to parse the justfile until `lib/just-foundry` is fetched, and `default: help` fails the same way. The optional import plus the project-level `init` above let `just init` fetch the submodules itself. Once they exist, the project `init` still wins over the imported one (`allow-duplicate-recipes`), and `just switch` resolves normally because it runs as a new `just` invocation.
 
 Run `just help` to see everything available.
 
@@ -59,6 +74,7 @@ Available recipes:
     [setup]
     init network="mainnet"                  # Initialize the project for a given network (default: mainnet)
     switch network override=""              # Select the active network (pass "override" for local copy)
+    networks                                # List the available networks and their chain IDs (* = active)
     setup                                   # Install Foundry
 
     [script]
@@ -261,8 +277,10 @@ Verifier: etherscan
 The default deploy script is `script/Deploy.s.sol:DeployScript`. Override it in your root `justfile`:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+default:
+    @just help
 
 DEPLOY_SCRIPT := "script/MyDeploy.s.sol:MyScript"
 ```
@@ -276,8 +294,10 @@ Common cases:
 **Replace** an inherited recipe with your own logic: same name, different body:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+default:
+    @just help
 
 # Custom deploy: extra steps before broadcasting
 deploy *args:
@@ -289,8 +309,10 @@ deploy *args:
 **Shadow recipes that don't apply** — useful when the project has no canonical single-deploy script. Mark the shadow `[private]` so it's hidden from `just --list`:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+default:
+    @just help
 
 [private]
 deploy *args:
@@ -310,8 +332,10 @@ Define them in your root `justfile` after the import.
 **Broadcast a script** — use `just run <script>` as the building block. The log filename is derived automatically: contract name when the script has a `:Contract` suffix, otherwise the file's basename (without `.s.sol`):
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+default:
+    @just help
 
 # Logs to logs/Upgrade-<network>-<timestamp>.log
 upgrade:
