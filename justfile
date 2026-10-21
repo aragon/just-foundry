@@ -12,21 +12,6 @@ DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
 help:
     @just --list --unsorted
 
-# Initialize the project for a given network (default: mainnet)
-[group('setup')]
-init network="mainnet":
-    #!/usr/bin/env bash
-    if ! command -v forge &>/dev/null; then
-        echo "Error: Foundry is not installed. Run 'just setup' to install it."
-        exit 1
-    fi
-    if ! command -v vars &>/dev/null; then
-        echo "Note: 'vars' is not installed. It is recommended but entirely optional."
-        echo "      You can copy .env.example into .env and define your secrets there."
-        echo "      You can install vars with 'just install-vars'"
-    fi
-    just switch {{ network }}
-
 # Select the active network (pass "override" to create a local editable copy)
 [group('setup')]
 switch network override="":
@@ -69,14 +54,22 @@ networks:
         printf "  %s %-18s %s\n" "$MARK" "$NAME" "$CHAIN_ID"
     done
 
-# Install Foundry
+# Install Foundry if missing
 [group('setup')]
 setup:
     #!/usr/bin/env bash
     set -euo pipefail
-    curl -L https://foundry.paradigm.xyz | bash
-    source ~/.bashrc
-    foundryup
+    if command -v forge &>/dev/null; then
+        echo "Foundry is already installed ($(forge --version | head -1))"
+    else
+        echo "Installing Foundry..."
+        curl -L https://foundry.paradigm.xyz | bash
+        # Called by path: the installer only adds ~/.foundry/bin to PATH for new shells
+        "$HOME/.foundry/bin/foundryup"
+    fi
+    if ! command -v vars &>/dev/null; then
+        echo "Note: 'vars' is optional but recommended. Install it with 'just install-vars', or define your secrets in .env."
+    fi
 
 # Install foundry-zksync alongside standard Foundry (forge-zksync / cast-zksync)
 [private]
@@ -89,9 +82,7 @@ setup-zksync:
     fi
     echo "Installing foundry-zksync..."
     curl -L https://raw.githubusercontent.com/matter-labs/foundry-zksync/main/install-foundry-zksync | bash
-    # export PATH="$HOME/.foundry/bin:$PATH"
-    source ~/.bashrc
-    foundryup-zksync
+    "$HOME/.foundry/bin/foundryup-zksync"
     mv ~/.foundry/bin/forge ~/.foundry/bin/forge-zksync
     mv ~/.foundry/bin/cast ~/.foundry/bin/cast-zksync
     echo "Reinstalling standard Foundry to restore forge / cast..."
