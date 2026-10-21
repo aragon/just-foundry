@@ -20,7 +20,7 @@ default:
 
 # Fetch dependencies and select the active network
 init network="mainnet":
-    git submodule update --init --recursive
+    git submodule update --init
     just setup
     just switch {{ network }}
 ```
