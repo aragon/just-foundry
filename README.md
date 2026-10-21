@@ -342,13 +342,13 @@ check:
     just dry-run script/Check.s.sol:Check
 ```
 
-**Custom logic before broadcasting** — source `{{ JUST_LIB }}` directly:
+**Custom logic before broadcasting** — source `lib/just-foundry/lib.sh` directly:
 
 ```just
 deploy-and-verify *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    source {{ JUST_LIB }} && env_load
+    source lib/just-foundry/lib.sh && env_load
     echo "Deploying to $NETWORK_NAME..."
     just run script/Deploy.s.sol:Deploy {{ args }}
     just verify
@@ -359,13 +359,13 @@ deploy-and-verify *args:
 ```just
 snapshot:
     #!/usr/bin/env bash
-    source {{ JUST_LIB }} && env_load
+    source lib/just-foundry/lib.sh && env_load
     LOG="logs/snapshot-$NETWORK_NAME-$(date +%y-%m-%d-%H-%M).log"
     run_logged "$LOG" my-command --network "$NETWORK_NAME"
     echo "Log: $LOG"
 ```
 
-`JUST_LIB` exposes: `env_load [--verbose]`, `env_network_name`, `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
+`lib.sh` exposes: `env_load [--verbose]`, `env_network_name`, `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
 
 ---
 
