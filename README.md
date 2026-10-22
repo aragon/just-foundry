@@ -10,24 +10,30 @@ A drop-in task runner and environment manager for Foundry projects. Add it as a 
 git submodule add https://github.com/aragon/just-foundry.git lib/just-foundry
 ```
 
-Create a two-line `justfile` at your project root:
+Create a `justfile` at your project root:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
 
-# Optional: override if you use a different deployment script
-# DEPLOY_SCRIPT := "script/Deploy.s.sol:DeployScript"
+default:
+    @just help 2>/dev/null || echo "Run 'just init <network>' first"
+
+# Fetch dependencies and select the active network
+init network="mainnet":
+    git submodule update --init --recursive
+    just setup
+    just switch {{ network }}
 ```
 
-Initialize submodules and set up your target network:
+Then, on any fresh clone:
 
 ```sh
-git submodule update --init --recursive
 just init sepolia
 ```
 
-> **Fresh clones:** `just init` imports its recipes from `lib/just-foundry/justfile`, so the submodule needs exist first.
+> On a fresh clone `lib/just-foundry` is still empty, so none of its recipes exist yet. `import?` lets `just` run anyway, and your `init` fetches the submodules before calling into just-foundry.
+>
+> Re-running `just init` resets every submodule to the commit pinned by your project.
 
 Run `just help` to see everything available.
 
@@ -54,12 +60,13 @@ keys:
 $ just
 Available recipes:
     default
+    init network="mainnet"                  # Fetch dependencies and select the active network
     help                                    # Show available commands
 
     [setup]
-    init network="mainnet"                  # Initialize the project for a given network (default: mainnet)
     switch network override=""              # Select the active network (pass "override" for local copy)
-    setup                                   # Install Foundry
+    networks                                # List the available networks and their chain IDs (* = active)
+    setup                                   # Install Foundry if missing
 
     [script]
     predeploy                               # Dry-run the deploy script (no broadcast)
@@ -101,7 +108,7 @@ All variables below are resolved automatically from the active network config wh
 |---|---|
 | `RPC_URL` | JSON-RPC endpoint (public fallback; override with a private one) |
 | `CHAIN_ID` | EVM chain ID |
-| `NETWORK_NAME` | Network name (derived from your last `just switch` or `just init`) |
+| `NETWORK_NAME` | Network name (derived from your last `just switch`) |
 | `VERIFIER` | Default verifier (`etherscan`, `blockscout`, `sourcify`, `zksync`, `routescan-mainnet`, `routescan-testnet`) |
 | `BLOCKSCOUT_HOST_NAME` | Blockscout host — required when `VERIFIER=blockscout` |
 | `FOUNDRY_EVM_VERSION` | EVM version override (e.g. `shanghai` for Chiliz) — picked up by Foundry automatically |
@@ -261,9 +268,12 @@ Verifier: etherscan
 The default deploy script is `script/Deploy.s.sol:DeployScript`. Override it in your root `justfile`:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
 
+default:
+    @just help 2>/dev/null || echo "Run 'just init <network>' first"
+
+# Overridden script
 DEPLOY_SCRIPT := "script/MyDeploy.s.sol:MyScript"
 ```
 
@@ -276,8 +286,9 @@ Common cases:
 **Replace** an inherited recipe with your own logic: same name, different body:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+# ...
 
 # Custom deploy: extra steps before broadcasting
 deploy *args:
@@ -289,8 +300,9 @@ deploy *args:
 **Shadow recipes that don't apply** — useful when the project has no canonical single-deploy script. Mark the shadow `[private]` so it's hidden from `just --list`:
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+# ...
 
 [private]
 deploy *args:
@@ -310,8 +322,9 @@ Define them in your root `justfile` after the import.
 **Broadcast a script** — use `just run <script>` as the building block. The log filename is derived automatically: contract name when the script has a `:Contract` suffix, otherwise the file's basename (without `.s.sol`):
 
 ```just
-default: help
-import 'lib/just-foundry/justfile'
+import? 'lib/just-foundry/justfile'
+
+# ...
 
 # Logs to logs/Upgrade-<network>-<timestamp>.log
 upgrade:
@@ -383,26 +396,11 @@ address; commit the resulting `networks/*.env` diff.
 
 ## Supported networks
 
-| Network | Chain ID |
-|---------|----------|
-| mainnet | 1 |
-| sepolia | 11155111 |
-| arbitrum | 42161 |
-| optimism | 10 |
-| base | 8453 |
-| polygon | 137 |
-| avalanche | 43114 |
-| chiliz | 88888 |
-| corn | 21000000 |
-| katana | 747474 |
-| hemi | 43111 |
-| monad | 143 |
-| citrea | 4114 |
-| robinhood | 4663 |
-| corn | 21000000 |
-| peaq | 3338 |
-| zksync | 324 |
-| zksync-sepolia | 300 |
+Every `networks/<name>.env` file is a supported network. List them, with their chain IDs, with:
+
+```sh
+just networks
+```
 
 To add a network, open a PR with a new `networks/<name>.env` file.
 
