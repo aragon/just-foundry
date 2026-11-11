@@ -1,1 +1,3 @@
 .env
+tests/fixtures/project/cache/
+tests/fixtures/project/out/build-info/

@@ -513,7 +513,16 @@ clean-nonces *nonces:
         just clean-nonce "$nonce"
     done
 
-# Transfer remaining deployer balance to REFUND_ADDRESS
+# Send a percent (e.g. 4%, 0.5%) of the deployer's balance to addresses, split equally; asks before each transfer
+[group('helpers')]
+[positional-arguments]
+fund percent *addresses:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source {{ JUST_LIB }} && env_load --verbose
+    bash lib/just-foundry/scripts/fund.sh "$@"
+
+# Send all of the deployer's balance but the gas to REFUND_ADDRESS: `just fund 100% $REFUND_ADDRESS`
 [private]
 refund:
     #!/usr/bin/env bash
@@ -523,21 +532,4 @@ refund:
         echo "REFUND_ADDRESS is not set. Aborting."
         exit 1
     fi
-    DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
-    BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
-    GAS_PARAMS=$(just resolve-gas-params)
-    # The price the transaction will pay: the chain's forced --gas-price if it has one, else the node's
-    GAS_PRICE=$(sed -n 's/.*--gas-price \([0-9]*\).*/\1/p' <<<"$GAS_PARAMS")
-    [ -n "$GAS_PRICE" ] || GAS_PRICE=$(cast gas-price --rpc-url "$RPC_URL")
-    SPENDABLE=$(echo "$BALANCE - $GAS_PRICE * 50000" | bc)
-    if [ "$(echo "$SPENDABLE > 0" | bc)" = "0" ]; then
-        echo "Insufficient balance to cover gas. Aborting."
-        exit 1
-    fi
-    echo "Refunding $SPENDABLE wei → $REFUND_ADDRESS"
-    read -rp "Continue? (y/N) " CONFIRM
-    [ "$CONFIRM" = "y" ] || { echo "Aborting"; exit 1; }
-    cast send --private-key "$DEPLOYER_KEY" $GAS_PARAMS \
-        --rpc-url "$RPC_URL" \
-        --value "$SPENDABLE" \
-        "$REFUND_ADDRESS"
+    just fund 100% "$REFUND_ADDRESS"
