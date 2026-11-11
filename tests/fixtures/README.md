@@ -24,6 +24,8 @@ The broadcasts are the files forge wrote when this script ran for real:
 
 `out/` and `zkout/` keep only the fields the recipes read from the artifacts: `bytecode.object` and `hash`.
 
-To regenerate: build `project/` with both toolchains, run the script against `anvil` and against
+To regenerate, work in a temporary copy of `project/`, never in place (forge would leave full artifacts, `cache/`
+and `out/build-info/` here, and the suite refuses to run on them): build the copy with both toolchains, run the
+script against `anvil` and against
 `anvil-zksync` with `--broadcast`, then copy the two `run-latest.json` files (emptying `factoryDeps` and
-`logs`) and trim the artifacts the same way. The addresses at the top of `tests/run.sh` change with them.
+`logs`) and the artifacts, trimmed the same way, back here. The addresses at the top of `tests/run.sh` change with them.

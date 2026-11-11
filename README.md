@@ -88,6 +88,7 @@ Available recipes:
     [helpers]
     env                                     # Show current environment (resolved values + sources)
     ipfs-pin file                           # Pin a file to IPFS via Pinata (requires PINATA_JWT in vars or .env)
+    fund percent *addresses                 # Send a percent (e.g. 4%, 0.5%) of the deployer's balance to addresses, split equally; asks before each transfer
     balance                                 # Show current wallet balance
 
     [develop]
@@ -134,7 +135,7 @@ The following are **not** in the network config — supply them in your local `.
 | `DEPLOYER_KEY` | Deployer wallet private key |
 | `ETHERSCAN_API_KEY` | Required when `VERIFIER=etherscan` |
 | `PINATA_JWT` | Required for `just ipfs-pin` |
-| `REFUND_ADDRESS` | Destination for `just refund` |
+| `REFUND_ADDRESS` | Destination for `just refund` (`just fund 100%` to it) |
 | `FORK_BLOCK_NUMBER` | Pin fork tests to a specific block (optional) |
 
 ---
@@ -267,6 +268,19 @@ just deployed-address MyPluginSetup "" MyPluginSetupZkSync   # with its own zkSy
 ```bash
 just each-network predeploy
 ```
+
+### Fund addresses from the deployer
+
+`just fund <percent> <address>...` sends that percent of the deployer's balance, less the gas, split equally among the addresses. It shows a summary first, then asks before each transfer.
+
+```bash
+just fund 10% 0xSigner1… 0xSigner2… 0xSigner3…
+```
+
+- `ok`: funded. `skipped`: you answered no. `FAILED`: not funded (the line says why): retry it as below.
+- `UNKNOWN`: the transfer may still land. Check the address on an explorer before running again.
+- **Retry:** running it again pays every address again, so retry only the `FAILED` and `skipped` ones: `just fund <percent> <addresses…>`. The share is worked out again from what is left: check the summary.
+- **Refund:** `just refund` sends everything but the gas to `REFUND_ADDRESS`. On Citrea, use `just fund 99% $REFUND_ADDRESS` instead.
 
 ### `just env`
 
@@ -409,7 +423,7 @@ poke target:
 bash tests/run.sh
 ```
 
-Runs the recipes against `tests/fixtures/project`, a small project with real broadcasts (see `tests/fixtures/README.md`), copied with this repo as its `lib/just-foundry`. Needs `just`, `jq` and `forge`. No network access: verification goes to a stub `forge`.
+Runs the recipes against `tests/fixtures/project`, a small project with real broadcasts (see `tests/fixtures/README.md`), copied with this repo as its `lib/just-foundry`. Needs `just`, `jq` and `forge`. No network access: verification goes to a stub `forge`. Tested with Foundry 1.3.5 and 1.9.0.
 
 ---
 
@@ -462,10 +476,10 @@ just gas-price           # current gas price on active network
 just nonce               # current deployer nonce
 just clean-nonce 27      # cancel a stuck tx by replacing it at nonce 27
 just clean-nonces 2 3 4  # cancel multiple stuck txs
-just refund              # sweep remaining balance to REFUND_ADDRESS
+just refund              # just fund 100% $REFUND_ADDRESS: sweep the balance to REFUND_ADDRESS
 ```
 
-`clean-nonce` and `refund` send with the chain's gas flags (`resolve-gas-params`), and `refund` keeps back gas at that price. `refund` needs `bc`.
+`clean-nonce` and `refund` send with the chain's gas flags (`resolve-gas-params`); `refund` sets aside gas the way `just fund` does.
 
 ---
 
