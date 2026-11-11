@@ -12,7 +12,8 @@
 #   3. Secrets from .env and/or `vars` are layered on top.
 #
 # Public API:
-#   env_network_name       print the active network name (no sourcing)
+#   env_network_name       print the active network name (no sourcing); fails when none is selected
+#   env_active_network     print the active network name, or nothing when none is selected
 #   env_load               source network config + secrets into the current shell
 #   env_show               print the resolved environment with source attribution
 #   run_logged log cmd…    run a command with a PTY, log stripped output to file
@@ -55,6 +56,12 @@ _env_network_file() {
 # Print the active network name (lightweight — no file sourcing).
 env_network_name() {
     _env_network_name || return 1
+}
+
+# Print the active network name, or nothing (and still succeed) when no network is selected.
+env_active_network() {
+    [ -L "$_NETWORK_SYMLINK" ] || return 0
+    _env_network_name 2>/dev/null || true
 }
 
 # Source network config + resolved secrets into the current shell.
