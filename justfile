@@ -175,9 +175,7 @@ each-network recipe *args:
     source {{ JUST_LIB }}
     # Positional arguments: the recipe's own arguments reach it exactly as given, spaces and quotes included
     RECIPE="$1"; shift
-    ACTIVE=$(env_active_network)
-    # Put back the network that was active, or none if none was
-    trap 'if [ -n "$ACTIVE" ]; then just switch "$ACTIVE" >/dev/null; else rm -f lib/just-foundry/.env; fi' EXIT
+    env_restore_network_on_exit
     mkdir -p logs
     STAMP=$(date +%y-%m-%d-%H-%M)
     FAILED=()
@@ -193,6 +191,11 @@ each-network recipe *args:
         fi
     done
     [ -z "${FAILED[*]:-}" ] || { echo "Failed on: ${FAILED[*]}"; exit 1; }
+
+# Send each <folder>/<network>.json ({chainId, to, data}) on its network after confirmation, with TX_SIGNER (default --ledger); files older than max_age minutes (default 24h) are refused; event: read its first indexed topic as the proposal ID
+[group('script-base')]
+send-tx-batch folder max_age="1440" event="":
+    bash lib/just-foundry/scripts/send-tx-batch.sh "{{ folder }}" "{{ max_age }}" "{{ event }}"
 
 # Run all unit tests
 [group('test')]
