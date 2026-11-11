@@ -6,6 +6,8 @@ A drop-in task runner and environment manager for Foundry projects. Add it as a 
 
 ## Install
 
+Requires [`just`](https://github.com/casey/just) 1.29 or later.
+
 ```sh
 git submodule add https://github.com/aragon/just-foundry.git lib/just-foundry
 ```
@@ -75,6 +77,8 @@ Available recipes:
     [script-base]
     run script *args                        # Broadcast a forge script (logged; name derived from contract/file)
     dry-run script                          # Simulate running a forge script (no broadcast)
+    deployed-address contract script="" zk_contract="" # Print the latest deployment of a contract on the active network
+    each-network recipe *args               # Run a recipe on every network, one log per network
 
     [test]
     test *args                              # Run all unit tests
@@ -92,7 +96,7 @@ Available recipes:
     anvil                                   # Start a forked EVM (set FORK_BLOCK_NUMBER in .env to pin a block)
 
     [verification]
-    verify type="" script=""                # Verify all contracts from the latest broadcast (defaults to DEPLOY_SCRIPT)
+    verify type="" script=""                # Verify the latest deployment of each contract in the latest broadcast (defaults to DEPLOY_SCRIPT)
     flatten target=""                       # Flatten every concrete src/ contract (or one) + auto-detect constructor args from broadcast/
 ```
 
@@ -244,6 +248,26 @@ Both paths quietly skip when nothing matches (contract wasn't deployed on the ac
 
 **When to reach for it.** Whenever Etherscan, Blockscout or similar block verification, you can use the flattened artifacts to deploy via their web UI's.
 
+### Deployed addresses
+
+`just deployed-address <Contract> [script] [zk_contract]` prints the address of the latest deployment of `<Contract>` in the active network's broadcast of `script` (default `DEPLOY_SCRIPT`), to feed into the next step of a release:
+
+```bash
+SETUP=$(just deployed-address MyPluginSetup)                 # exactly one line, or an error
+just deployed-address MyPluginSetup "" MyPluginSetupZkSync   # with its own zkSync variant
+```
+
+- **zkSync:** build with forge-zksync first; the name comes from the `zkout/` artifact.
+- **It fails** instead of guessing: no broadcast or no match, a latest deployment that reverted or wasn't mined, or a broadcast for another chain.
+
+### Run a recipe on every network
+
+`just each-network <recipe> [args]` runs `just <recipe> [args]` on each network in turn, each in its own process, and restores the active network at the end. It prints one `ok` / `FAILED` line per network, logs to `logs/<recipe>-<network>-<timestamp>.log`, and exits non-zero if any network failed.
+
+```bash
+just each-network predeploy
+```
+
 ### `just env`
 
 Shows the fully resolved environment — every variable once, with its effective value and source:
@@ -365,7 +389,27 @@ snapshot:
     echo "Log: $LOG"
 ```
 
-`lib.sh` exposes: `env_load [--verbose]`, `env_network_name`, `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
+`lib.sh` exposes: `env_load [--verbose]`, `env_network_name`, `env_active_network` (the active network, or nothing when none is selected), `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
+
+**Send a transaction with the chain's gas flags** — `just resolve-gas-params` prints the flags a chain needs (for example `--legacy --gas-price …` on Chiliz), which both `cast send` and `forge script` accept. `just resolve-script-params` adds the forge-only `--slow` on zkSync on top. Both always answer for the active network (`just switch`), even when the shell still carries another network's `CHAIN_ID`.
+
+```just
+poke target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source lib/just-foundry/lib.sh && env_load
+    cast send $(just resolve-gas-params) --rpc-url "$RPC_URL" --private-key "$DEPLOYER_KEY" {{ target }} "poke()"
+```
+
+---
+
+## Testing just-foundry
+
+```bash
+bash tests/run.sh
+```
+
+Runs the recipes against `tests/fixtures/project`, a small project with real broadcasts (see `tests/fixtures/README.md`), copied with this repo as its `lib/just-foundry`. Needs `just`, `jq` and `forge`. No network access: verification goes to a stub `forge`.
 
 ---
 
@@ -420,6 +464,8 @@ just clean-nonce 27      # cancel a stuck tx by replacing it at nonce 27
 just clean-nonces 2 3 4  # cancel multiple stuck txs
 just refund              # sweep remaining balance to REFUND_ADDRESS
 ```
+
+`clean-nonce` and `refund` send with the chain's gas flags (`resolve-gas-params`), and `refund` keeps back gas at that price. `refund` needs `bc`.
 
 ---
 

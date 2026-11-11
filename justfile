@@ -44,8 +44,9 @@ switch network override="":
 networks:
     #!/usr/bin/env bash
     set -euo pipefail
+    source {{ JUST_LIB }}
     DIR="{{ source_directory() }}/networks"
-    ACTIVE=$(readlink "{{ source_directory() }}/.env" 2>/dev/null | xargs -r basename | sed 's/\.env$//' || true)
+    ACTIVE=$(env_active_network)
     echo "Available networks:"
     for f in "$DIR"/*.env; do
         NAME=$(basename "$f" .env)
@@ -152,6 +153,46 @@ dry-run script:
         --rpc-url "$RPC_URL" \
         $BUILD_PARAMS $SCRIPT_PARAMS \
         -vvv
+
+# Print the address of the latest deployment of a contract in the active network's broadcast (zk_contract: its name on zkSync, if different)
+[group('script-base')]
+deployed-address contract script="" zk_contract="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source {{ JUST_LIB }} && env_load
+    SCRIPT="{{ if script == "" { DEPLOY_SCRIPT } else { script } }}"
+    NAME="{{ contract }}"
+    case "$CHAIN_ID" in 300|324) [ -z "{{ zk_contract }}" ] || NAME="{{ zk_contract }}" ;; esac
+    BROADCAST="broadcast/$(basename "${SCRIPT%%:*}")/$CHAIN_ID/run-latest.json"
+    bash lib/just-foundry/scripts/deployments.sh "$BROADCAST" "$CHAIN_ID" "$NAME" | cut -f2
+
+# Run a recipe on every network, each in its own process, logging to logs/<recipe>-<network>-<timestamp>.log; restores the active network
+[group('script-base')]
+[positional-arguments]
+each-network recipe *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    source {{ JUST_LIB }}
+    # Positional arguments: the recipe's own arguments reach it exactly as given, spaces and quotes included
+    RECIPE="$1"; shift
+    ACTIVE=$(env_active_network)
+    # Put back the network that was active, or none if none was
+    trap 'if [ -n "$ACTIVE" ]; then just switch "$ACTIVE" >/dev/null; else rm -f lib/just-foundry/.env; fi' EXIT
+    mkdir -p logs
+    STAMP=$(date +%y-%m-%d-%H-%M)
+    FAILED=()
+    for f in lib/just-foundry/networks/*.env; do
+        NAME=$(basename "$f" .env)
+        LOG="logs/$RECIPE-$NAME-$STAMP.log"
+        # A new `just` process per network: no environment carries over, and a failure doesn't stop the loop
+        if just switch "$NAME" >/dev/null && just "$RECIPE" ${1+"$@"} > "$LOG" 2>&1; then
+            echo "ok      $NAME"
+        else
+            echo "FAILED  $NAME (see $LOG)"
+            FAILED+=("$NAME")
+        fi
+    done
+    [ -z "${FAILED[*]:-}" ] || { echo "Failed on: ${FAILED[*]}"; exit 1; }
 
 # Run all unit tests
 [group('test')]
@@ -265,7 +306,7 @@ anvil:
     source {{ JUST_LIB }} && env_load --verbose
     anvil -f "$RPC_URL" ${FORK_BLOCK_NUMBER:+--fork-block-number $FORK_BLOCK_NUMBER}
 
-# Verify all contracts from the latest broadcast (type: etherscan|blockscout|sourcify)
+# Verify the latest deployment of each contract in the latest broadcast, EVM or zkSync (type: etherscan|blockscout|sourcify)
 [group('verification')]
 verify type="" script="":
     #!/usr/bin/env bash
@@ -275,8 +316,10 @@ verify type="" script="":
     SCRIPT="{{ if script == "" { DEPLOY_SCRIPT } else { script } }}"
     [ "${VERIFIER:-}" != "etherscan" ] && unset ETHERSCAN_API_KEY
     VERIFIER_PARAMS=$(just resolve-verifier-params) || exit 1
+    BUILD_PARAMS=$(just resolve-build-params) || exit 1
     SCRIPT_FILE=$(basename "$SCRIPT" | cut -d: -f1)
-    bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $VERIFIER_PARAMS
+    FORGE=$(just resolve-forge) || exit 1
+    FORGE="$FORGE" bash lib/just-foundry/scripts/verify-contracts.sh "$CHAIN_ID" "$SCRIPT_FILE" $BUILD_PARAMS $VERIFIER_PARAMS
 
 # Flatten every concrete src/ contract (or one), plus ABI-encoded ctor args from broadcast/. See README > "Flatten for manual verification".
 [group('verification')]
@@ -318,49 +361,25 @@ _flatten-one target:
     source {{ JUST_LIB }} && env_load 2>/dev/null || true
     [ -z "${CHAIN_ID:-}" ] && exit 0
 
-    args=""
-    case "${CHAIN_ID:-}" in
-        300|324)
-            # zkSync: match zkout .hash against the bytecodeHash field of CONTRACT_DEPLOYER.create calldata.
-            ZKOUT_JSON="zkout/$(basename "$SRC")/${NAME}.json"
-            [ -f "$ZKOUT_JSON" ] || exit 0
-            target_hash=$(jq -r '.hash // empty' "$ZKOUT_JSON" | tr 'A-F' 'a-f')
-            [ -n "$target_hash" ] || exit 0
-            for broadcast in broadcast/*/"${CHAIN_ID}"/run-latest.json; do
-                [ -e "$broadcast" ] || continue
-                while IFS= read -r input; do
-                    [ -n "$input" ] && [ "$input" != "null" ] || continue
-                    [ "${input:0:10}" = "0x9c4d535b" ] || continue    # create(bytes32,bytes32,bytes)
-                    body="${input:10}"
-                    tx_hash=$(echo "${body:64:64}" | tr 'A-F' 'a-f')
-                    [ "$tx_hash" = "$target_hash" ] || continue
-                    length_hex="${body:192:64}"
-                    length_dec=$((16#$length_hex))
-                    [ "$length_dec" -gt 0 ] && args="0x${body:256:$((length_dec * 2))}"
-                    break 2
-                done < <(jq -r '.transactions[]?.transaction.input // empty' "$broadcast")
-            done
-            ;;
-        *)
-            # EVM: slice broadcast tx.input by local bytecode length; the tail is the ABI-encoded args.
-            OUT_JSON="out/$(basename "$SRC")/${NAME}.json"
-            [ -f "$OUT_JSON" ] || exit 0
-            input=""
-            for broadcast in broadcast/*/"${CHAIN_ID}"/run-latest.json; do
-                [ -e "$broadcast" ] || continue
-                found=$(jq -r --arg n "$NAME" \
-                    '(.transactions // []) | map(select(.transactionType == "CREATE" and .contractName == $n)) | (.[-1].transaction.input // empty)' \
-                    "$broadcast")
-                if [ -n "$found" ] && [ "$found" != "null" ]; then input="$found"; break; fi
-            done
-            [ -n "$input" ] || exit 0
-            bytecode=$(jq -r '.bytecode.object' "$OUT_JSON")
-            bc_hex="${bytecode#0x}"; in_hex="${input#0x}"
-            [ "${#in_hex}" -gt "${#bc_hex}" ] && args="0x${in_hex:${#bc_hex}}"
-            ;;
-    esac
-
-    [ -n "$args" ] || exit 0
+    # The latest deployment of NAME, in the most recent of the network's broadcasts that deployed it at all.
+    # When that one didn't succeed, no arguments: never an older deployment's, as for deployed-address.
+    row=""; from=""; latest=-1
+    for broadcast in broadcast/*/"${CHAIN_ID}"/run-latest.json; do
+        [ -e "$broadcast" ] || continue
+        found=$(bash lib/just-foundry/scripts/deployments.sh "$broadcast" "$CHAIN_ID" 2>/dev/null \
+            | awk -F'\t' -v n="$NAME" '$1 == n { line = $0 } END { print line }') || continue
+        [ -n "$found" ] || continue
+        timestamp=$(jq -r '.timestamp // 0' "$broadcast")
+        [ "$timestamp" -ge "$latest" ] || continue
+        row="$found"; from="$broadcast"; latest="$timestamp"
+    done
+    [ -n "$row" ] || exit 0
+    status=$(cut -f3 <<<"$row"); args=$(cut -f4 <<<"$row")
+    if [ "$status" != "ok" ]; then
+        echo "Args      skipped: the latest deployment of $NAME in $from $([ "$status" = reverted ] && echo reverted || echo was not mined)"
+        exit 0
+    fi
+    [ -n "$args" ] && [ "$args" != "?" ] || exit 0
     echo "$args" > "flat/${NAME}.args.txt"
     echo "Args      → flat/${NAME}.args.txt"
 
@@ -369,7 +388,7 @@ _flatten-one target:
 resolve-forge:
     #!/usr/bin/env bash
     source {{ JUST_LIB }}
-    [ -z "${CHAIN_ID:-}" ] && env_load
+    env_load || exit 1  # always: a CHAIN_ID left in the shell must not win over the active network
     case "${CHAIN_ID:-}" in
         324|300)
             command -v forge-zksync &>/dev/null || { echo "Error: forge-zksync is not installed. Run 'just setup-zksync'." >&2; exit 1; }
@@ -390,14 +409,26 @@ resolve-build-params:
             ;;
     esac
 
-# Script execution flags (chain-specific gas/speed params)
+# Script execution flags: the chain's gas flags, plus --slow on ZkSync
 [private]
 resolve-script-params:
     #!/usr/bin/env bash
+    set -euo pipefail
+    source {{ JUST_LIB }}
+    env_load || exit 1  # always: a CHAIN_ID left in the shell must not win over the active network
+    GAS_PARAMS=$(just resolve-gas-params)
     case "${CHAIN_ID:-}" in
-        324|300)
-            echo "--slow"
-            ;;
+        324|300) echo "--slow${GAS_PARAMS:+ $GAS_PARAMS}" ;;
+        *) echo "$GAS_PARAMS" ;;
+    esac
+
+# Chain-specific gas flags, accepted by both `forge script` and `cast send`
+[private]
+resolve-gas-params:
+    #!/usr/bin/env bash
+    source {{ JUST_LIB }}
+    env_load || exit 1  # always: a CHAIN_ID left in the shell must not win over the active network
+    case "${CHAIN_ID:-}" in
         43111)
             echo "--legacy --gas-price 100000000"
             ;;
@@ -468,7 +499,7 @@ clean-nonce nonce:
     #!/usr/bin/env bash
     source {{ JUST_LIB }} && env_load
     DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
-    cast send --private-key "$DEPLOYER_KEY" \
+    cast send --private-key "$DEPLOYER_KEY" $(just resolve-gas-params) \
         --rpc-url "$RPC_URL" \
         --value 0 \
         --nonce {{ nonce }} \
@@ -494,7 +525,10 @@ refund:
     fi
     DEPLOYER_ADDRESS=$(cast wallet address "$DEPLOYER_KEY")
     BALANCE=$(cast balance "$DEPLOYER_ADDRESS" --rpc-url "$RPC_URL")
-    GAS_PRICE=$(cast gas-price --rpc-url "$RPC_URL")
+    GAS_PARAMS=$(just resolve-gas-params)
+    # The price the transaction will pay: the chain's forced --gas-price if it has one, else the node's
+    GAS_PRICE=$(sed -n 's/.*--gas-price \([0-9]*\).*/\1/p' <<<"$GAS_PARAMS")
+    [ -n "$GAS_PRICE" ] || GAS_PRICE=$(cast gas-price --rpc-url "$RPC_URL")
     SPENDABLE=$(echo "$BALANCE - $GAS_PRICE * 50000" | bc)
     if [ "$(echo "$SPENDABLE > 0" | bc)" = "0" ]; then
         echo "Insufficient balance to cover gas. Aborting."
@@ -503,7 +537,7 @@ refund:
     echo "Refunding $SPENDABLE wei → $REFUND_ADDRESS"
     read -rp "Continue? (y/N) " CONFIRM
     [ "$CONFIRM" = "y" ] || { echo "Aborting"; exit 1; }
-    cast send --private-key "$DEPLOYER_KEY" \
+    cast send --private-key "$DEPLOYER_KEY" $GAS_PARAMS \
         --rpc-url "$RPC_URL" \
         --value "$SPENDABLE" \
         "$REFUND_ADDRESS"
