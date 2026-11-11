@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/run.sh — tests for the just-foundry recipes, run against the fixture project in tests/fixtures/project
-# Usage: bash tests/run.sh   (needs just, jq and forge)
+# Usage: bash tests/run.sh   (needs just, jq and Foundry: forge, cast, anvil; anvil-zksync and forge-zksync optional)
 #
 # Each test runs in a fresh copy of the fixture project, with this repo copied to lib/just-foundry, the way
 # a plugin repo imports it. The fixture broadcasts are real: tests/fixtures/README.md says how they were made.
@@ -76,8 +76,12 @@ wait_for_node() {
 
 nonzero() { [ "$1" -ne 0 ] && echo 1 || echo 0; }
 
+LAST_CHECK=$SECONDS
 check() {
     local name="$1" expected="$2" actual="$3"
+    # A slow test is worth knowing about: it usually hides a wait that should never happen
+    [ $((SECONDS - LAST_CHECK)) -le 15 ] || echo "SLOW    $name: $((SECONDS - LAST_CHECK))s since the previous check"
+    LAST_CHECK=$SECONDS
     if [ "$expected" = "$actual" ]; then
         PASSED=$((PASSED + 1))
         echo "ok      $name"
@@ -371,6 +375,531 @@ just switch mainnet >/dev/null
 check "gas params: mainnet has none" "" "$(just resolve-gas-params)"
 cd / && rm -rf "$P"
 
+# --- send-tx-batch, against anvil, with a test key in place of the Ledger ---
+
+ANVIL_PORT=8599
+TEST_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+# No test waits for a receipt longer than this (the tool's default is 300s): a stall fails, with details
+export TX_RECEIPT_TIMEOUT=30
+require_free_port "$ANVIL_PORT"
+anvil --port "$ANVIL_PORT" --silent &
+ANVIL_PID=$!
+trap 'kill $ANVIL_PID 2>/dev/null' EXIT
+RPC="http://127.0.0.1:$ANVIL_PORT"
+wait_for_node "$ANVIL_PID" "$RPC"
+
+P=$(new_project)
+cd "$P"
+# Two local networks on the same anvil, and one whose file claims another chain than its RPC serves
+# local-b's RPC URL carries credentials, which the screen must not show
+printf 'RPC_URL="%s"\nCHAIN_ID="31337"\n' "$RPC" > lib/just-foundry/networks/local-a.env
+printf 'RPC_URL="%s"\nCHAIN_ID="31337"\n' "http://user:secret@127.0.0.1:$ANVIL_PORT" > lib/just-foundry/networks/local-b.env
+printf 'RPC_URL="%s"\nCHAIN_ID="1"\n' "$RPC" > lib/just-foundry/networks/local-wrong-rpc.env
+mkdir -p target-src
+cat > target-src/Target.sol <<'EOF'
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+contract Target {
+    event Created(uint256 indexed id, address indexed creator);
+
+    uint256 public calls;
+
+    function propose(uint256 id) external {
+        calls++;
+        emit Created(id, msg.sender);
+    }
+
+    function fail() external {
+        calls++;
+        revert("no");
+    }
+}
+EOF
+TARGET=$(forge create target-src/Target.sol:Target --rpc-url "$RPC" --private-key "$TEST_KEY" --broadcast 2>/dev/null \
+    | sed -n 's/^Deployed to: //p')
+EVENT="Created(uint256,address)"
+export TX_SIGNER="--private-key $TEST_KEY"
+calls() { cast call "$TARGET" "calls()(uint256)" --rpc-url "$RPC"; }
+# tx_file <network> <signature> [args]: a file for chain 31337 (CHAIN= overrides it)
+tx_file() {
+    printf '{"chainId":%s,"to":"%s","data":"%s"}\n' "${CHAIN:-31337}" "$TARGET" "$(cast calldata "$2" ${3:-})" > "txs/$1.json"
+}
+exists() { [ -e "$1" ] && echo yes || echo no; }
+
+just switch sepolia >/dev/null
+mkdir -p txs
+tx_file local-a "propose(uint256)" 42
+tx_file local-b "propose(uint256)" 43
+OUT=$(printf 'y\ny\n' | just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "send: exits 0" "0" "$CODE"
+check "send: both networks sent" "2" "$(calls)"
+check "send: the .json files are removed" "0" "$(ls txs/*.json 2>/dev/null | wc -l | tr -d ' ')"
+check "send: no .pending left" "0" "$(ls txs/*.pending 2>/dev/null | wc -l | tr -d ' ')"
+check "send: the proposal ID read from the event" "42" "$(jq -r .proposalId txs/local-a.sent)"
+check "send: the transaction hash" "1" "$(jq -r .txHash txs/local-b.sent | grep -cE '^0x[0-9a-f]{64}$')"
+check "send: the screen shows the chain the RPC serves, and its host" "1" \
+    "$(grep -A1 '== local-a (chain 31337)' <<<"$OUT" | grep -c "rpc:   $RPC$")"
+check "send: the screen shows the target" "1" "$(grep -A4 '== local-a' <<<"$OUT" | grep -c "to:  *$TARGET")"
+check "send: the screen hides the RPC's credentials" "1 0" \
+    "$(grep -A1 '== local-b (chain 31337)' <<<"$OUT" | grep -c "rpc:   $RPC$") $(grep -c secret <<<"$OUT")"
+check "send: the active network is restored" "sepolia" "$(source lib/just-foundry/lib.sh && env_active_network)"
+
+tx_file local-a "propose(uint256)" 44
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "skip on .sent: exits 0" "0" "$CODE"
+check "skip on .sent: nothing sent" "2" "$(calls)"
+check "skip on .sent: the file is kept" "yes" "$(exists txs/local-a.json)"
+check "skip on .sent: says so" "1" "$(grep -c 'SKIP    local-a: already sent' <<<"$OUT")"
+rm -f txs/*
+
+tx_file local-a "propose(uint256)" 45
+touch -t 202001010000 txs/local-a.json  # portable: GNU and BSD touch
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "stale: counts as not sent" "1" "$(nonzero $CODE)"
+check "stale: nothing sent" "2" "$(calls)"
+check "stale: the file is kept" "yes" "$(exists txs/local-a.json)"
+check "stale: says so" "1" "$(grep -c 'STALE   local-a: .* older than 60 minutes' <<<"$OUT")"
+rm -f txs/*
+
+# The maximum age defaults to 24 hours (1440 minutes); when given, it must be a positive whole number
+aged() {  # aged <file> <minutes ago>
+    local t=$(( $(date +%s) - $2 * 60 ))
+    touch -t "$(date -r "$t" +%Y%m%d%H%M 2>/dev/null || date -d "@$t" +%Y%m%d%H%M)" "$1"  # BSD date, then GNU date
+}
+tx_file local-a "propose(uint256)" 45
+aged txs/local-a.json $((25 * 60))
+OUT=$(printf 'n\n' | just send-tx-batch txs 2>&1); CODE=$?
+check "default maximum age: a file 25 hours old is stale" "1 1 2" \
+    "$(nonzero $CODE) $(grep -c 'STALE   local-a: .* older than 1440 minutes' <<<"$OUT") $(calls)"
+aged txs/local-a.json $((23 * 60))
+OUT=$(printf 'n\n' | just send-tx-batch txs 2>&1); CODE=$?
+check "default maximum age: a file 23 hours old is offered, here declined" "0 0 2 yes" \
+    "$CODE $(grep -c 'STALE' <<<"$OUT") $(calls) $(exists txs/local-a.json)"
+for age in 0 abc; do
+    OUT=$(printf 'y\n' | just send-tx-batch txs "$age" 2>&1); CODE=$?
+    check "maximum age '$age': refused, nothing sent" "1 1 2" \
+        "$(nonzero $CODE) $(grep -c 'the maximum age must be a positive number of minutes' <<<"$OUT") $(calls)"
+done
+rm -f txs/*
+
+tx_file local-a "propose(uint256)" 46
+OUT=$(printf 'n\n' | just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "decline: exits 0" "0" "$CODE"
+check "decline: nothing sent" "2" "$(calls)"
+check "decline: the file is kept, nothing recorded" "yes no" "$(exists txs/local-a.json) $(exists txs/local-a.sent)"
+rm -f txs/*
+
+# A call that fails gas estimation: nothing is broadcast
+tx_file local-a "fail()"
+tx_file local-b "propose(uint256)" 47
+OUT=$(printf 'y\ny\n' | just send-tx-batch txs 60 2>&1); CODE=$?
+check "revert before sending: exits non-zero" "1" "$(nonzero $CODE)"
+check "revert before sending: lists the network" "1" "$(grep -c '^Not sent: local-a$' <<<"$OUT")"
+check "revert before sending: the file is kept, nothing recorded" "yes no no" \
+    "$(exists txs/local-a.json) $(exists txs/local-a.sent) $(exists txs/local-a.pending)"
+check "revert before sending: the next network is still sent" "3" "$(calls)"
+check "no event given: only the transaction hash is recorded" '["txHash"]' "$(jq -c keys txs/local-b.sent)"
+rm -f txs/*
+
+# A fixed gas limit skips estimation: the transaction is mined and reverts
+tx_file local-a "fail()"
+OUT=$(printf 'y\n' | ETH_GAS_LIMIT=100000 just send-tx-batch txs 60 2>&1); CODE=$?
+check "mined revert: exits non-zero" "1" "$(nonzero $CODE)"
+check "mined revert: lists the network" "1" "$(grep -c '^Not sent: local-a$' <<<"$OUT")"
+check "mined revert: the file is kept, nothing recorded, nothing pending" "yes no no" \
+    "$(exists txs/local-a.json) $(exists txs/local-a.sent) $(exists txs/local-a.pending)"
+check "mined revert: it was mined" "1" "$(grep -c 'tx:    0x' <<<"$OUT")"
+rm -f txs/*
+
+# Broadcast but not confirmed: blocks stop being mined
+cast rpc evm_setAutomine false --rpc-url "$RPC" >/dev/null
+tx_file local-a "propose(uint256)" 48
+OUT=$(printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "unconfirmed: exits non-zero" "1" "$(nonzero $CODE)"
+check "unconfirmed: the hash is kept in .pending, with the file" "yes yes no" \
+    "$(exists txs/local-a.pending) $(exists txs/local-a.json) $(exists txs/local-a.sent)"
+PENDING=$(jq -r .txHash txs/local-a.pending)
+OUT=$(printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "unconfirmed, run again: not sent again, kept" "1" "$(grep -c 'no receipt for 0x[0-9a-f]* yet: kept in txs/local-a.pending, run again to check it' <<<"$OUT")"
+check "unconfirmed, run again: no second confirmation screen" "0" "$(grep -c '^== ' <<<"$OUT")"
+check "unconfirmed, run again: exits non-zero" "1" "$(nonzero $CODE)"
+cast rpc evm_mine --rpc-url "$RPC" >/dev/null
+cast rpc evm_setAutomine true --rpc-url "$RPC" >/dev/null
+check "unconfirmed: exactly one transaction was broadcast" "4" "$(calls)"
+touch -t 202001010000 txs/local-a.json  # a pending transaction is checked however old the file is
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "now mined, run again: exits 0" "0" "$CODE"
+check "now mined, run again: recorded with its hash and ID" "$PENDING 48" "$(jq -r '.txHash + " " + .proposalId' txs/local-a.sent)"
+check "now mined, run again: .json and .pending removed" "no no" "$(exists txs/local-a.json) $(exists txs/local-a.pending)"
+check "now mined, run again: nothing more sent" "4" "$(calls)"
+rm -f txs/*
+
+# The event the caller expects is not emitted: recorded as sent, but reported
+tx_file local-a "propose(uint256)" 49
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 "Other(uint256)" 2>&1); CODE=$?
+check "missing event: exits non-zero" "1" "$(nonzero $CODE)"
+check "missing event: says so" "1" "$(grep -c 'emitted no Other(uint256)' <<<"$OUT")"
+check "missing event: still recorded as sent, file removed" "yes no" "$(exists txs/local-a.sent) $(exists txs/local-a.json)"
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 "Other(uint256)" 2>&1)
+check "missing event: never sent twice" "5" "$(calls)"
+rm -f txs/*
+
+# Wrong chains, wrong names, malformed files: nothing is sent
+CHAIN=1 tx_file local-a "propose(uint256)" 50
+tx_file local-wrong-rpc "propose(uint256)" 51
+tx_file Local-b "propose(uint256)" 52
+printf '{"chainId":31337,"to":"0x1234","data":"0x"}\n' > txs/local-b.json
+OUT=$(printf 'y\ny\ny\ny\n' | just send-tx-batch txs 60 2>&1); CODE=$?
+check "rejected files: exits non-zero" "1" "$(nonzero $CODE)"
+check "rejected files: nothing sent" "5" "$(calls)"
+check "a file for another chain: rejected" "1" "$(grep -c 'is for chain 1, but local-a is chain 31337' <<<"$OUT")"
+check "an RPC serving another chain: rejected" "1" "$(grep -c 'RPC of local-wrong-rpc serves chain 31337, not 1' <<<"$OUT")"
+check "a name that only matches without case: rejected" "1" "$(grep -c 'no network named Local-b' <<<"$OUT")"
+check "a malformed address: rejected" "1" "$(grep -c '"to" is not an address' <<<"$OUT")"
+check "all four listed" "1" "$(grep -c '^Not sent: Local-b local-a local-b local-wrong-rpc$' <<<"$OUT")"
+check "no confirmation screen for any of them" "0" "$(grep -c '^== ' <<<"$OUT")"
+rm -f txs/*
+# What .pending records: the signed transaction, before it is broadcast
+cast rpc evm_setAutomine false --rpc-url "$RPC" >/dev/null
+tx_file local-a "propose(uint256)" 60
+printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" >/dev/null 2>&1
+check "pending: records hash, nonce, sender and signed bytes" "yes" \
+    "$(jq -e '(.txHash | test("^0x[0-9a-f]{64}$")) and (.nonce | type == "number") and (.from | test("^0x")) and (.raw | test("^0x"))' txs/local-a.pending >/dev/null && echo yes || echo no)"
+check "pending: the hash is the signed bytes' hash" "$(cast keccak "$(jq -r .raw txs/local-a.pending)")" "$(jq -r .txHash txs/local-a.pending)"
+check "pending: the nonce is the sender's" "$(cast nonce "$(jq -r .from txs/local-a.pending)" --rpc-url "$RPC")" "$(jq -r .nonce txs/local-a.pending)"
+check "pending: records the file's content hash and the hash the node reported" "yes yes" \
+    "$([ "$(jq -r .fileHash txs/local-a.pending)" = "$(cast keccak "$(jq -r '"\(.chainId)|\(.to | ascii_downcase)|\(.data | ascii_downcase)"' txs/local-a.json)")" ] && echo yes || echo no) $([ "$(jq -r .publishedHash txs/local-a.pending)" = "$(jq -r .txHash txs/local-a.pending)" ] && echo yes || echo no)"
+
+# Dropped from the mempool: the same signed bytes are broadcast again, not a new transaction
+PENDING=$(jq -r .txHash txs/local-a.pending)
+BEFORE=$(cast call "$TARGET" "calls()(uint256)" --rpc-url "$RPC")
+cast rpc anvil_dropTransaction "$PENDING" --rpc-url "$RPC" >/dev/null
+check "dropped, setup: anvil no longer knows the transaction" "null" "$(cast rpc eth_getTransactionByHash "$PENDING" --rpc-url "$RPC")"
+cast rpc evm_setAutomine true --rpc-url "$RPC" >/dev/null
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "dropped: exits 0" "0" "$CODE"
+check "dropped: mined with the recorded hash" "$PENDING 60" "$(jq -r '.txHash + " " + .proposalId' txs/local-a.sent 2>/dev/null)"
+check "dropped: sent once" "$((BEFORE + 1))" "$(calls)"
+rm -f txs/*
+
+# The nonce used by another transaction: the tool says what it observed, and only a person deletes .pending
+cast rpc evm_setAutomine false --rpc-url "$RPC" >/dev/null
+tx_file local-a "propose(uint256)" 61
+printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" >/dev/null 2>&1
+PENDING=$(jq -r .txHash txs/local-a.pending)
+cast rpc anvil_dropTransaction "$PENDING" --rpc-url "$RPC" >/dev/null
+check "nonce used, setup: anvil no longer knows the transaction" "null" "$(cast rpc eth_getTransactionByHash "$PENDING" --rpc-url "$RPC")"
+cast rpc evm_setAutomine true --rpc-url "$RPC" >/dev/null
+# Another transaction takes exactly the recorded nonce
+cast send --private-key "$TEST_KEY" --nonce "$(jq -r .nonce txs/local-a.pending)" --rpc-url "$RPC" \
+    0x00000000000000000000000000000000000000bb >/dev/null
+check "nonce used, setup: the nonce moved past the recorded one" "yes" \
+    "$([ "$(cast nonce "$(jq -r .from txs/local-a.pending)" --rpc-url "$RPC")" -gt "$(jq -r .nonce txs/local-a.pending)" ] && echo yes || echo no)"
+BEFORE=$(calls)
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "nonce used: not sent" "1 $BEFORE" "$(nonzero $CODE) $(calls)"
+check "nonce used: says what this RPC observed" "1" \
+    "$(grep -c "On $RPC: no receipt for 0x[0-9a-f]*, and nonce [0-9]* of 0x[0-9a-fA-F]* has been used" <<<"$OUT")"
+check "nonce used: tells the person what to do" "1" \
+    "$(grep -c 'if an explorer confirms 0x[0-9a-f]* is absent, delete txs/local-a.pending and run again' <<<"$OUT")"
+check "nonce used: never says it was never mined" "0" "$(grep -c 'never mined' <<<"$OUT")"
+check "nonce used: .pending and the file kept, even after a y" "yes yes" "$(exists txs/local-a.pending) $(exists txs/local-a.json)"
+rm txs/local-a.pending  # the person checked the explorer
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "nonce used, .pending deleted by hand: the next run sends" "0 $((BEFORE + 1)) 61" "$CODE $(calls) $(jq -r .proposalId txs/local-a.sent 2>/dev/null)"
+rm -f txs/*
+
+# A cast wrapper standing in for the RPC: the first receipt lookup answers "null" (not mined yet), as when
+# the transaction is mined between the receipt and the nonce reads, or every receipt lookup fails
+mock_receipts() {
+    mkdir -p mock
+    cat > mock/cast <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = rpc ] && [ "\$2" = eth_getTransactionReceipt ] && [ "\$3" = "$2" ]; then
+    case "$1" in
+        null-once) [ -f "$P/mock/done" ] || { touch "$P/mock/done"; echo null; exit 0; } ;;
+        fail) echo "Error: backend unavailable" >&2; exit 1 ;;
+    esac
+fi
+exec "$(command -v cast)" "\$@"
+EOF
+    chmod +x mock/cast
+}
+
+# Mined between the two reads: found on the read after the nonce, recorded, nothing sent again
+cast rpc evm_setAutomine false --rpc-url "$RPC" >/dev/null
+tx_file local-a "propose(uint256)" 62
+printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" >/dev/null 2>&1
+PENDING=$(jq -r .txHash txs/local-a.pending)
+cast rpc evm_mine --rpc-url "$RPC" >/dev/null
+cast rpc evm_setAutomine true --rpc-url "$RPC" >/dev/null
+BEFORE=$(calls)
+mock_receipts null-once "$PENDING"
+OUT=$(printf 'y\n' | PATH="$P/mock:$PATH" just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "mined between the reads: the first read said not mined" "yes" "$(exists mock/done)"
+check "mined between the reads: found after the nonce read, recorded" "0 $PENDING 62" "$CODE $(jq -r '.txHash + " " + .proposalId' txs/local-a.sent 2>/dev/null)"
+check "mined between the reads: nothing sent again" "$BEFORE" "$(calls)"
+rm -rf txs/* mock
+
+# Every receipt lookup fails while the nonce answers: unknown, so .pending stays and nothing is sent again
+cast rpc evm_setAutomine false --rpc-url "$RPC" >/dev/null
+tx_file local-a "propose(uint256)" 65
+printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" >/dev/null 2>&1
+PENDING=$(jq -r .txHash txs/local-a.pending)
+cast rpc evm_mine --rpc-url "$RPC" >/dev/null
+cast rpc evm_setAutomine true --rpc-url "$RPC" >/dev/null
+BEFORE=$(calls)
+mock_receipts fail "$PENDING"
+OUT=$(printf 'y\ny\n' | PATH="$P/mock:$PATH" just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "failing receipt lookups: not resolved, exits non-zero" "1" "$(nonzero $CODE)"
+check "failing receipt lookups: says it can't read the receipt" "1" "$(grep -c "can't read the receipt of $PENDING on $RPC: kept in txs/local-a.pending, run again" <<<"$OUT")"
+check "failing receipt lookups: .pending and the file kept" "yes yes" "$(exists txs/local-a.pending) $(exists txs/local-a.json)"
+OUT=$(printf 'y\ny\n' | PATH="$P/mock:$PATH" just send-tx-batch txs 60 "$EVENT" 2>&1)
+check "failing receipt lookups, run again: still kept, nothing sent again" "yes $BEFORE" "$(exists txs/local-a.pending) $(calls)"
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "failing receipt lookups, then a healthy RPC: the original recorded" "0 $PENDING 65 $BEFORE" \
+    "$CODE $(jq -r '.txHash + " " + .proposalId' txs/local-a.sent 2>/dev/null) $(calls)"
+rm -rf txs/* mock
+
+# The file changed while its transaction was pending: nothing is resolved for the new content
+cast rpc evm_setAutomine false --rpc-url "$RPC" >/dev/null
+tx_file local-a "propose(uint256)" 70
+printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" >/dev/null 2>&1
+PENDING=$(jq -r .txHash txs/local-a.pending)
+cp txs/local-a.json signed.json
+tx_file local-a "propose(uint256)" 71
+cast rpc evm_mine --rpc-url "$RPC" >/dev/null
+cast rpc evm_setAutomine true --rpc-url "$RPC" >/dev/null
+BEFORE=$(calls)
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "changed file: refused" "1" "$(nonzero $CODE)"
+check "changed file: says so" "1" "$(grep -c "txs/local-a.json changed since $PENDING was signed: restore it" <<<"$OUT")"
+check "changed file: shows what the pending transaction carries" "1" \
+    "$(grep -c "pending data: $(cast calldata "propose(uint256)" 70)" <<<"$OUT")"
+check "changed file: nothing recorded or removed, nothing sent" "no yes yes $BEFORE" \
+    "$(exists txs/local-a.sent) $(exists txs/local-a.json) $(exists txs/local-a.pending) $(calls)"
+cp signed.json txs/local-a.json
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "changed file restored: the pending transaction recorded" "0 70 $BEFORE" "$CODE $(jq -r .proposalId txs/local-a.sent 2>/dev/null) $(calls)"
+rm -rf txs/* signed.json
+
+# The broadcast fails: its error is shown, .pending is kept, and the next run broadcasts the same bytes
+mkdir -p nopublish
+cat > nopublish/cast <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = publish ]; then echo "Error: replacement transaction underpriced" >&2; exit 1; fi
+exec "$(command -v cast)" "\$@"
+EOF
+chmod +x nopublish/cast
+tx_file local-a "propose(uint256)" 72
+BEFORE=$(calls)
+OUT=$(printf 'y\n' | PATH="$P/nopublish:$PATH" just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "failed broadcast: its error is shown" "1" "$(grep -c 'the broadcast failed: Error: replacement transaction underpriced' <<<"$OUT")"
+check "failed broadcast: .pending kept, nothing sent" "1 yes $BEFORE" "$(nonzero $CODE) $(exists txs/local-a.pending) $(calls)"
+PENDING=$(jq -r .txHash txs/local-a.pending)
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "failed broadcast, run again: the same transaction sent" "0 $PENDING $((BEFORE + 1))" "$CODE $(jq -r .txHash txs/local-a.sent 2>/dev/null) $(calls)"
+rm -rf txs/* nopublish
+
+# The node reports another hash than the signed transaction's: a loud failure, both hashes kept
+mkdir -p odd
+cat > odd/cast <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = publish ]; then "$(command -v cast)" "\$@" >/dev/null || exit 1; echo 0x$(printf '%064x' 1); exit 0; fi
+exec "$(command -v cast)" "\$@"
+EOF
+chmod +x odd/cast
+tx_file local-a "propose(uint256)" 63
+OUT=$(printf 'y\n' | PATH="$P/odd:$PATH" just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+check "hash mismatch: fails" "1" "$(nonzero $CODE)"
+check "hash mismatch: says so loudly" "1" "$(grep -c 'the node reports 0x0*1 for the transaction signed as 0x' <<<"$OUT")"
+check "hash mismatch: both hashes kept in .pending" "yes" \
+    "$(jq -e '(.txHash | test("^0x[0-9a-f]{64}$")) and .publishedHash == "0x'"$(printf '%064x' 1)"'"' txs/local-a.pending >/dev/null && echo yes || echo no)"
+OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+check "hash mismatch: the next run resolves it by the signed hash" "0 63" "$CODE $(jq -r .proposalId txs/local-a.sent 2>/dev/null)"
+rm -rf txs/* odd
+
+# .pending can't be written: nothing is broadcast
+tx_file local-a "propose(uint256)" 64
+BEFORE=$(calls)
+chmod 555 txs
+OUT=$(printf 'y\n' | just send-tx-batch txs 60 2>&1); CODE=$?
+chmod 755 txs
+check "unwritable .pending: fails" "1" "$(nonzero $CODE)"
+check "unwritable .pending: says so" "1" "$(grep -c "can't write txs/local-a.pending: nothing broadcast" <<<"$OUT")"
+check "unwritable .pending: nothing broadcast" "$BEFORE" "$(calls)"
+rm -rf txs/*
+
+OUT=$(just send-tx-batch txs 0 2>&1); CODE=$?
+check "max age must be a positive number of minutes" "1" "$(nonzero $CODE)"
+cd / && rm -rf "$P"
+
+# --- send-tx-batch through real RPC faults: a node proxy in front of anvil, the real cast binary ---
+# The proxy answers eth_getTransactionReceipt with a JSON-RPC error, an HTTP 502, or a non-JSON 200, or fails
+# eth_getTransactionCount. A mined transaction still pending for the tool must stay pending (never recorded as
+# reverted, never reported as replaced, never sent again); a healthy RPC afterwards records the original.
+
+# Needs node 18 or later, for its built-in fetch
+if command -v node >/dev/null && node -e 'process.exit(typeof fetch === "function" ? 0 : 1)' 2>/dev/null; then
+    FAULT_RPC=http://127.0.0.1:8651
+    PROXY_RPC=http://127.0.0.1:8652
+    FAULT_MODE=$(mktemp)
+    echo pass > "$FAULT_MODE"
+    require_free_port 8651
+    require_free_port 8652
+    anvil --port 8651 --silent &
+    FAULT_ANVIL_PID=$!
+    node -e '
+const http = require("http"), fs = require("fs");
+const modeFile = process.argv[1], target = process.argv[2];
+http.createServer((req, res) => {
+  let b = ""; req.on("data", c => b += c).on("end", async () => {
+    const mode = fs.readFileSync(modeFile, "utf8").trim();
+    const j = JSON.parse(b); const arr = Array.isArray(j) ? j : [j];
+    const hit = m => arr.some(x => x.method === m);
+    if ((mode === "jsonrpc-error" && hit("eth_getTransactionReceipt")) || (mode === "nonce-error" && hit("eth_getTransactionCount"))) {
+      const out = arr.map(x => ({jsonrpc: "2.0", id: x.id, error: {code: -32000, message: "backend unavailable"}}));
+      res.setHeader("content-type", "application/json"); res.end(JSON.stringify(Array.isArray(j) ? out : out[0])); return;
+    }
+    if (mode === "http-502" && hit("eth_getTransactionReceipt")) { res.statusCode = 502; res.setHeader("content-type", "text/html"); res.end("<html>Bad Gateway</html>"); return; }
+    if (mode === "garbage" && hit("eth_getTransactionReceipt")) { res.setHeader("content-type", "text/plain"); res.end("rate limited"); return; }
+    const r = await fetch(target, {method: "POST", headers: {"content-type": "application/json"}, body: b});
+    res.setHeader("content-type", "application/json"); res.end(await r.text());
+  });
+}).listen(8652);' "$FAULT_MODE" "$FAULT_RPC" &
+    PROXY_PID=$!
+    trap 'kill $ANVIL_PID $FAULT_ANVIL_PID $PROXY_PID 2>/dev/null; rm -f "$FAULT_MODE"' EXIT
+    wait_for_node "$FAULT_ANVIL_PID" "$FAULT_RPC"
+    wait_for_node "$PROXY_PID" "$PROXY_RPC"
+
+    P=$(new_project)
+    cd "$P"
+    use_rpc() { printf 'RPC_URL="%s"\nCHAIN_ID="31337"\n' "$1" > lib/just-foundry/networks/local-a.env; }
+    use_rpc "$FAULT_RPC"
+    mkdir -p target-src txs
+    cat > target-src/Target.sol <<'EOF'
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+contract Target {
+    event Created(uint256 indexed id, address indexed creator);
+
+    uint256 public calls;
+
+    function propose(uint256 id) external {
+        calls++;
+        emit Created(id, msg.sender);
+    }
+}
+EOF
+    FAULT_TARGET=$(forge create target-src/Target.sol:Target --rpc-url "$FAULT_RPC" --private-key "$TEST_KEY" --broadcast 2>/dev/null \
+        | sed -n 's/^Deployed to: //p')
+    fault_calls() { cast call "$FAULT_TARGET" "calls()(uint256)" --rpc-url "$FAULT_RPC"; }
+
+    # A mined transaction whose receipt the tool never saw
+    printf '{"chainId":31337,"to":"%s","data":"%s"}\n' "$FAULT_TARGET" "$(cast calldata "propose(uint256)" 80)" > txs/local-a.json
+    cast rpc evm_setAutomine false --rpc-url "$FAULT_RPC" >/dev/null
+    printf 'y\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" >/dev/null 2>&1
+    HASH=$(jq -r .txHash txs/local-a.pending)
+    cast rpc evm_mine --rpc-url "$FAULT_RPC" >/dev/null
+    cast rpc evm_setAutomine true --rpc-url "$FAULT_RPC" >/dev/null
+    check "rpc faults setup: mined, one proposal, still pending for the tool" "0x1 1 yes" \
+        "$(cast rpc eth_getTransactionReceipt "$HASH" --rpc-url "$FAULT_RPC" | jq -r .status) $(fault_calls) $(exists txs/local-a.pending)"
+
+    use_rpc "$PROXY_RPC"
+    for mode in jsonrpc-error http-502 garbage; do
+        echo "$mode" > "$FAULT_MODE"
+        OUT=$(printf 'y\ny\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+        check "$mode: not sent, exit non-zero" "1" "$(nonzero $CODE)"
+        check "$mode: reported as unknown (can't read), not as reverted or replaced" "1 0 0" \
+            "$(grep -c "can't read the \(receipt\|nonce\)" <<<"$OUT") $(grep -c 'reverted' <<<"$OUT") $(grep -c 'has been used' <<<"$OUT")"
+        check "$mode: .pending and the file kept, no .sent" "yes yes no" \
+            "$(exists txs/local-a.pending) $(exists txs/local-a.json) $(exists txs/local-a.sent)"
+        check "$mode: nothing sent again" "1" "$(fault_calls)"
+    done
+
+    # A pending transaction the node never saw, whose nonce is now used (as a lagging node would show it)
+    cp txs/local-a.pending keep.pending
+    jq '.txHash = "0x'"$(printf '%064x' 7)"'" | .publishedHash = .txHash' keep.pending > txs/local-a.pending
+    echo nonce-error > "$FAULT_MODE"
+    OUT=$(printf 'y\ny\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+    check "nonce-error: not sent, reported as unknown, kept" "1 1 yes yes" \
+        "$(nonzero $CODE) $(grep -c "can't read the nonce" <<<"$OUT") $(exists txs/local-a.pending) $(exists txs/local-a.json)"
+    echo pass > "$FAULT_MODE"
+    use_rpc "$FAULT_RPC"
+    OUT=$(printf 'y\ny\n' | TX_RECEIPT_TIMEOUT=3 just send-tx-batch txs 60 "$EVENT" 2>&1); CODE=$?
+    check "lagging node, nonce moved, no receipt: reports what it observed and the manual step" "1 1" \
+        "$(grep -c 'no receipt for 0x0*7, and nonce .* has been used' <<<"$OUT") $(grep -c 'if an explorer confirms 0x0*7 is absent, delete txs/local-a.pending' <<<"$OUT")"
+    check "lagging node: .pending kept even after y, nothing sent" "yes 1" "$(exists txs/local-a.pending) $(fault_calls)"
+
+    # Back to the real pending record on a healthy RPC: the original is recorded, nothing sent again
+    cp keep.pending txs/local-a.pending
+    OUT=$(just send-tx-batch txs 60 "$EVENT" 2>&1 </dev/null); CODE=$?
+    check "healthy RPC afterwards: the original recorded, once" "0 $HASH 80 1" \
+        "$CODE $(jq -r '.txHash + " " + .proposalId' txs/local-a.sent 2>/dev/null) $(fault_calls)"
+    cd / && rm -rf "$P"
+    kill $FAULT_ANVIL_PID $PROXY_PID 2>/dev/null; rm -f "$FAULT_MODE"
+    trap 'kill $ANVIL_PID 2>/dev/null' EXIT
+else
+    echo "SKIP    send-tx-batch through real RPC faults: install node 18 or later to run it"
+fi
+
+# --- send-tx-batch on anvil-zksync: the hash of the signed bytes is the transaction's hash there too ---
+
+if command -v anvil-zksync >/dev/null && command -v forge-zksync >/dev/null; then
+    ZK_PORT=8615
+    require_free_port "$ZK_PORT"
+    # anvil-zksync writes its log and cache in the current directory: give it its own
+    ZK_DIR=$(mktemp -d)
+    (cd "$ZK_DIR" && exec anvil-zksync --port "$ZK_PORT" >/dev/null 2>&1) &
+    ZK_PID=$!
+    trap 'kill $ANVIL_PID $ZK_PID 2>/dev/null; rm -rf "$ZK_DIR"' EXIT
+    ZK_RPC="http://127.0.0.1:$ZK_PORT"
+    for _ in $(seq 1 120); do cast chain-id --rpc-url "$ZK_RPC" >/dev/null 2>&1 && break; sleep 1; done
+    cast chain-id --rpc-url "$ZK_RPC" >/dev/null 2>&1 || { echo "zksync: anvil-zksync didn't start:"; tail -3 "$ZK_DIR/anvil-zksync.log"; }
+    P=$(new_project)
+    cd "$P"
+    printf 'RPC_URL="%s"\nCHAIN_ID="260"\n' "$ZK_RPC" > lib/just-foundry/networks/local-zk.env
+    mkdir -p target-src txs
+    cat > target-src/Target.sol <<'EOF'
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.28;
+
+contract Target {
+    event Created(uint256 indexed id, address indexed creator);
+
+    uint256 public calls;
+
+    function propose(uint256 id) external {
+        calls++;
+        emit Created(id, msg.sender);
+    }
+}
+EOF
+    # Every option before the contract: some foundry-zksync builds take what follows the contract as its arguments
+    CREATE_OUT=$(forge-zksync create --zksync --rpc-url "$ZK_RPC" --private-key "$TEST_KEY" --broadcast \
+        target-src/Target.sol:Target 2>&1)
+    ZK_TARGET=$(sed -n 's/^Deployed to: //p' <<<"$CREATE_OUT")
+    [ -n "$ZK_TARGET" ] || { echo "zksync: the test contract wasn't deployed:"; echo "$CREATE_OUT" | tail -5; }
+    printf '{"chainId":260,"to":"%s","data":"%s"}\n' "$ZK_TARGET" "$(cast calldata "propose(uint256)" 77)" > txs/local-zk.json
+    OUT=$(printf 'y\n' | TX_RECEIPT_TIMEOUT=60 just send-tx-batch txs 60 "Created(uint256,address)" 2>&1); CODE=$?
+    check "zksync send: exits 0" "0" "$CODE"
+    check "zksync send: the proposal ID read from the receipt" "77" "$(jq -r .proposalId txs/local-zk.sent 2>/dev/null)"
+    check "zksync send: the recorded hash is the transaction's" "0x1" \
+        "$(cast receipt "$(jq -r .txHash txs/local-zk.sent)" --rpc-url "$ZK_RPC" --async --json 2>/dev/null | jq -r .status)"
+    check "zksync send: no hash mismatch" "0" "$(grep -c 'the node reports' <<<"$OUT")"
+    check "zksync send: sent once" "1" "$(cast call "$ZK_TARGET" "calls()(uint256)" --rpc-url "$ZK_RPC")"
+    cd / && rm -rf "$P"
+else
+    echo "SKIP    send-tx-batch on anvil-zksync: install anvil-zksync and forge-zksync (just setup-zksync) to run it"
+fi
+
+# The send-tx-batch nodes are done. Stop them here: the next sections set their own exit trap, which replaces theirs
+kill $ANVIL_PID ${ZK_PID:-} 2>/dev/null
+[ -z "${ZK_DIR:-}" ] || rm -rf "$ZK_DIR"
+trap - EXIT
+
 # --- fund: a share of the deployer's balance, split equally, each transfer confirmed ---
 
 FUND_PORT=8660
@@ -568,7 +1097,6 @@ contract Refuser {
     }
 }
 EOF
-TEST_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 REFUSER=$(forge create refuser-src/Refuser.sol:Refuser --rpc-url "$FUND_RPC" --private-key "$TEST_KEY" --broadcast 2>/dev/null \
     | sed -n 's/^Deployed to: //p')
 reset_balances 100000000000000000000

@@ -14,6 +14,7 @@
 # Public API:
 #   env_network_name       print the active network name (no sourcing); fails when none is selected
 #   env_active_network     print the active network name, or nothing when none is selected
+#   env_restore_network_on_exit   select the current network again when the calling shell exits
 #   env_load               source network config + secrets into the current shell
 #   env_show               print the resolved environment with source attribution
 #   run_logged log cmd…    run a command with a PTY, log stripped output to file
@@ -62,6 +63,21 @@ env_network_name() {
 env_active_network() {
     [ -L "$_NETWORK_SYMLINK" ] || return 0
     _env_network_name 2>/dev/null || true
+}
+
+# Select the network that is active now again when the calling shell exits (or none, if none is active).
+# For recipes that `just switch` from one network to the next. It replaces any EXIT trap the caller had set.
+env_restore_network_on_exit() {
+    _ENV_RESTORE_NETWORK=$(env_active_network)
+    trap _env_restore_network EXIT
+}
+
+_env_restore_network() {
+    if [ -n "$_ENV_RESTORE_NETWORK" ]; then
+        just switch "$_ENV_RESTORE_NETWORK" >/dev/null
+    else
+        rm -f "$_NETWORK_SYMLINK"
+    fi
 }
 
 # Source network config + resolved secrets into the current shell.

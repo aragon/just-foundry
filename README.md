@@ -79,6 +79,7 @@ Available recipes:
     dry-run script                          # Simulate running a forge script (no broadcast)
     deployed-address contract script="" zk_contract="" # Print the latest deployment of a contract on the active network
     each-network recipe *args               # Run a recipe on every network, one log per network
+    send-tx-batch folder max_age="1440" event="" # Send each <folder>/<network>.json on its network after confirmation; files older than max_age minutes (default 24h) are refused
 
     [test]
     test *args                              # Run all unit tests
@@ -269,6 +270,27 @@ just deployed-address MyPluginSetup "" MyPluginSetupZkSync   # with its own zkSy
 just each-network predeploy
 ```
 
+### Send a transaction file on each network
+
+`just send-tx-batch <folder> [max_age] [event]` sends `<folder>/<network>.json` on each network (`<network>` as in `networks/*.env`), after you confirm each one. It signs with `TX_SIGNER` (cast wallet flags, `--ledger` by default) and refuses files older than `max_age` minutes (default 1440: 24 hours). With `event`, it records the proposal ID from that event.
+
+```json
+{"chainId": 137, "to": "0x…", "data": "0x…"}
+```
+
+```bash
+just send-tx-batch upgrades/v1.5                                    # files up to 24 hours old
+just send-tx-batch upgrades/v1.5 1440 "ProposalCreated(uint256,address,uint64,uint64,bytes,(address,uint256,bytes)[],uint256)"  # and record the proposal ID
+```
+
+- **Sent:** `<network>.sent` is written and the `.json` removed. A network with a `.sent` file is skipped.
+- **Skipped:** you answered no. The `.json` is kept.
+- **Failed** (the run exits non-zero and lists them): the file is too old (generate it again), the RPC serves another chain, or the transaction reverted (run again). When `event` is given but the target didn't emit it, the network is recorded as sent yet reported failed: check on an explorer what the transaction did.
+- **Pending (unknown):** `<network>.pending` holds a transaction whose outcome isn't known yet. Run again: it is resolved before anything new is signed. Before deleting `<network>.pending` (when the tool can't find the transaction, or the `.json` changed since it was signed), **check on an explorer that the transaction is absent**, then run again. Otherwise it could be sent twice.
+- **Stuck with a fee too low:** send a 0-value transfer to yourself at the pending nonce (`<nonce>` and `<from>` are in `.pending`) with fees at least 10% higher, using the flags from `just resolve-gas-params`: `cast send $TX_SIGNER <flags, higher --gas-price/--priority-gas-price> --nonce <nonce> --value 0 <from> --rpc-url <rpc>`. Then follow the explorer step above. If it fails with `nonce too low`, the original was mined: keep `.pending` and run again. On zkSync, wait for it to be mined or dropped instead.
+
+Use a new `<folder>` for each release, answer each network yourself (never pipe `yes`), and share `.sent` files before a second signer sends the same files.
+
 ### Fund addresses from the deployer
 
 `just fund <percent> <address>...` sends that percent of the deployer's balance, less the gas, split equally among the addresses. It shows a summary first, then asks before each transfer.
@@ -403,7 +425,7 @@ snapshot:
     echo "Log: $LOG"
 ```
 
-`lib.sh` exposes: `env_load [--verbose]`, `env_network_name`, `env_active_network` (the active network, or nothing when none is selected), `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
+`lib.sh` exposes: `env_load [--verbose]`, `env_network_name`, `env_active_network` (the active network, or nothing when none is selected), `env_restore_network_on_exit` (for recipes that switch networks), `env_show`, `run_logged <log> <cmd…>`, `strip_ansi <file>`.
 
 **Send a transaction with the chain's gas flags** — `just resolve-gas-params` prints the flags a chain needs (for example `--legacy --gas-price …` on Chiliz), which both `cast send` and `forge script` accept. `just resolve-script-params` adds the forge-only `--slow` on zkSync on top. Both always answer for the active network (`just switch`), even when the shell still carries another network's `CHAIN_ID`.
 
@@ -423,7 +445,7 @@ poke target:
 bash tests/run.sh
 ```
 
-Runs the recipes against `tests/fixtures/project`, a small project with real broadcasts (see `tests/fixtures/README.md`), copied with this repo as its `lib/just-foundry`. Needs `just`, `jq` and `forge`. No network access: verification goes to a stub `forge`. Tested with Foundry 1.3.5 and 1.9.0.
+Runs the recipes against `tests/fixtures/project`, a small project with real broadcasts (see `tests/fixtures/README.md`), copied with this repo as its `lib/just-foundry`. Needs `just`, `jq` and Foundry (`forge`, `cast`, `anvil`). Tested with Foundry 1.3.5 and 1.9.0. No network access: verification goes to a stub `forge`, and `send-tx-batch` sends to a local anvil with a test key. When `node` is installed, `send-tx-batch` also runs through a node proxy in front of anvil that injects RPC faults (a JSON-RPC error, an HTTP 502, a non-JSON answer, a failing nonce read). When `anvil-zksync` and `forge-zksync` are installed (`just setup-zksync`), the send flow also runs on anvil-zksync (tested with foundry-zksync v0.1.10 and anvil-zksync 0.7.1). Each optional section prints a `SKIP` line when its tool is missing. The suite refuses to start a node on a port that is already in use (stop the leftover process), waits at most 30 seconds for any receipt, and prints a `SLOW` line for any test that took more than 15 seconds. The suite stops at once, naming what is missing, when one of the required tools isn't installed.
 
 ---
 
